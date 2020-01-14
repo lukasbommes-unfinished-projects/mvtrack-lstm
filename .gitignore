@@ -1,0 +1,14 @@
+*.avi
+.empty
+.ipynb_checkpoints/
+__pycache__/
+
+/pytorch/
+
+/models/
+/runs/
+/eval_output/
+
+/data/MOT17/
+/data/MOT15/
+/data/MOT16/

@@ -1,0 +1,5 @@
+1) BUILD IMAGE:
+sudo nvidia-docker build -t pytorch -f docker/pytorch/Dockerfile .
+
+2) RUN CONTAINER:
+sudo nvidia-docker run --rm -ti --ipc=host -v $(pwd):/workspace pytorch

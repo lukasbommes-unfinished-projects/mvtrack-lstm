@@ -1,0 +1,16 @@
+version: "2.3"
+
+services:
+
+  mvtrack_lstm:
+    container_name: mvtrack_lstm
+    image: mvtrack_lstm
+    runtime: nvidia
+    environment:
+      - DISPLAY
+    ipc: host # for GUI
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw  # for GUI access
+      - .:/workspace
+    entrypoint: ./docker-entrypoint.sh
+    command: tail -f /dev/null
