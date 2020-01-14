@@ -59,6 +59,7 @@ class TrackNet(nn.Module):
     def __init__(self, seq_length=3, pooling_size=7):
         super(TrackNet, self).__init__()
 
+        self.DEBUG = False
         self.device = None
         self.pooling_size = pooling_size  # the ROIs are split into m x m regions
         self.base = BaseNet()
@@ -80,9 +81,10 @@ class TrackNet(nn.Module):
         self.conv1x1 = nn.Conv2d(196, 4*self.pooling_size*self.pooling_size, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
         self.ps_roi_pool = torchvision.ops.PSRoIPool(output_size=(self.pooling_size, self.pooling_size), spatial_scale=self.base_scale)
 
-        print("base net param count: ", count_params(self.base))
-        print("lstm param count: ", count_params(self.lstm))
-        print("conv1x1 param count: ", count_params(self.conv1x1))
+        if self.DEBUG:
+            print("base net param count: ", count_params(self.base))
+            print("lstm param count: ", count_params(self.lstm))
+            print("conv1x1 param count: ", count_params(self.conv1x1))
 
 
     def forward(self, mvs_residuals, boxes_prev):
@@ -94,23 +96,25 @@ class TrackNet(nn.Module):
         batch_size, seq_len, C, H, W = mvs_residuals.shape
         num_boxes = boxes_prev.shape[-2]
 
-        print(mvs_residuals.shape)
-        print(boxes_prev.shape)
+        if self.DEBUG:
+            print(mvs_residuals.shape)
+            print(boxes_prev.shape)
 
         # apply CNN feature extractor to each element of the sequence
         out_tmp = torch.tensor([]).to(self.device)
-        print(out_tmp.device)
         for i in range(seq_len):
             out_t = self.base(mvs_residuals[:, i, :, :, :])  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
             out_t  = out_t.unsqueeze(1)
             out_tmp = torch.cat((out_tmp, out_t ), 1)
         out = out_tmp
-        print(out.shape)
+        if self.DEBUG:
+            print(out.device)
 
         # input shape: [batch_size, seq_len, C, H, W]
         # out: list of tensors with shape [batch_size, seq_len, C, H, W], each tensor belongs to one time step
         out, _  = self.lstm(out)
-        print(out.shape)
+        if self.DEBUG:
+            print(out.device)
 
         # apply conv1x1 element-wise
         out_tmp = torch.tensor([]).to(self.device)
@@ -119,7 +123,8 @@ class TrackNet(nn.Module):
             out_t  = out_t.unsqueeze(1)
             out_tmp = torch.cat((out_tmp, out_t ), 1)
         out = out_tmp
-        print(out.shape)
+        if self.DEBUG:
+            print(out.device)
 
         # apply PS ROI pooling to crop features inside bounding boxes
         out_tmp = torch.tensor([]).to(self.device)
@@ -129,7 +134,8 @@ class TrackNet(nn.Module):
             out_t  = out_t.unsqueeze(1)
             out_tmp = torch.cat((out_tmp, out_t ), 1)
         out = out_tmp
-        print(out.shape)
+        if self.DEBUG:
+            print(out.device)
 
         out_tmp = torch.tensor([]).to(self.device)
         for i in range(seq_len):
@@ -137,12 +143,20 @@ class TrackNet(nn.Module):
             out_t  = out_t.unsqueeze(1)
             out_tmp = torch.cat((out_tmp, out_t ), 1)
         out = out_tmp
+        if self.DEBUG:
+            print(out.device)
 
-        print(out.shape)
         out = out.squeeze()
-        print(out.shape)
+        if self.DEBUG:
+            print(out.device)
 
         out = out.view(batch_size, seq_len, num_boxes, 4)
-        print(out.shape)
+        if self.DEBUG:
+            print(out.device)
 
-        return out  # shape [batch_size, seq_len, num_boxes, 4] with row format [vxc, vyc, vw, vh]
+        # pick out the last velocity for current time step
+        out = out[:, -1, :, :]
+        if self.DEBUG:
+            print(out.device)
+
+        return out  # shape [batch_size, 1, num_boxes, 4] with row format [vxc, vyc, vw, vh]

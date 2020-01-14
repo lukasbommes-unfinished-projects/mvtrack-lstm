@@ -13,7 +13,7 @@ from lib.dataset.velocities import velocities_from_boxes
 from lib.visu import draw_boxes, draw_velocities, draw_motion_vectors
 
 
-class MotionVectorDataset(torch.utils.data.Dataset):
+class TrackDataset(torch.utils.data.Dataset):
     def __init__(self, root_dir="data", mode="train", seq_length=3,
         max_scale=1000, gop_size=12, max_num_boxes=55, visu=True):
 
@@ -56,8 +56,6 @@ class MotionVectorDataset(torch.utils.data.Dataset):
         self.build_index_()
         if self.DEBUG:
             print("Built dataset index.")
-
-        print(self.index)
 
 
     def get_sequence_lengths_(self):
