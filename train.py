@@ -22,6 +22,7 @@ torch.set_printoptions(precision=10)
 
 # CURRENT ISSUES
 # sigma factor 1.5 for OTCD T-CNN, use appropiate velocity <-> box conversion functions from OTCD
+# velocity_pred has to be denormlized with bbox_reg_mean and bbox_reg_std stats
 
 # EXPERIMENTS FOR PAPER:
 # Check if scaling factor in tracknet is really 1/16. might be changed due to additional layers

@@ -7,6 +7,7 @@ import coviar
 
 from lib.visu import draw_boxes
 from lib.dataset.loaders import load_detections
+from lib.dataset.utils import compute_scaling_factor
 from lib.tracking.tracker_OTCD import TrackerOTCD
 
 
@@ -72,8 +73,15 @@ if __name__ == "__main__":
         mvs_residuals[:, :, 0:2] = mv  # XY
         mvs_residuals[:, :, 2:5] = residual  # BGR
 
-        # draw info
-        #frame = cv2.putText(frame, "Frame Type: {}".format(frame_type), (1000, 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+        # scale frame and residuals to max size
+        scaling_needed, scaling_factor = compute_scaling_factor(mvs_residuals)
+        # scale mvs_residuals
+        if scaling_needed:
+            frame = cv2.resize(frame, None, None, fx=scaling_factor,
+                fy=scaling_factor, interpolation=cv2.INTER_LINEAR)
+            mvs_residuals = cv2.resize(mvs_residuals, None, None, fx=scaling_factor,
+                fy=scaling_factor, interpolation=cv2.INTER_LINEAR)
+            mvs_residuals[:, :, 0:2] = mvs_residuals[:, :, 0:2] * scaling_factor
 
         # draw color legend
         frame = cv2.putText(frame, "Detection", (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_detection, 2, cv2.LINE_AA)
@@ -84,8 +92,8 @@ if __name__ == "__main__":
 
         # update with detections
         if frame_idx % detector_interval == 0:
-            det_boxes = det_boxes_all[frame_idx]
-            det_scores = det_scores_all[frame_idx]
+            det_boxes = det_boxes_all[frame_idx] * scaling_factor
+            det_scores = det_scores_all[frame_idx] * scaling_factor
 
             tracker_baseline.update(mvs_residuals, det_boxes, det_scores)
             #tracker_deep.update(motion_vectors, frame_type, det_boxes, det_scores)

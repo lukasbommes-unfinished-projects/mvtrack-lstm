@@ -10,6 +10,7 @@ import coviar
 
 from lib.dataset.loaders import load_groundtruth
 from lib.dataset.velocities import velocities_from_boxes
+from lib.dataset.utils import compute_scaling_factor
 from lib.visu import draw_boxes, draw_velocities, draw_motion_vectors
 
 
@@ -157,16 +158,6 @@ class TrackDataset(torch.utils.data.Dataset):
         # BUGFIX: MOT15/train/KITTI-17 last frame (frame_idx = 144) can not be loaded
 
 
-    def compute_scaling_factor_(self, mvs_residuals):
-        current_scale = np.max(mvs_residuals.shape[:2])
-        scaling_needed = False
-        scaling_factor = 1
-        if current_scale > self.max_scale:
-            scaling_needed = True
-            scaling_factor = self.max_scale / current_scale
-        return scaling_needed, scaling_factor
-
-
     def __len__(self):
         """Return the total length of the dataset."""
         total_len = len(self.index)
@@ -202,7 +193,7 @@ class TrackDataset(torch.utils.data.Dataset):
             mvs_residuals[:, :, 2:5] = residual  # BGR
 
             # compute scaling factor so that longer side is at maximum equal max_scale
-            scaling_needed, scaling_factor = self.compute_scaling_factor_(mvs_residuals)
+            scaling_needed, scaling_factor = compute_scaling_factor(mvs_residuals, max_scale=self.max_scale)
             if scaling_needed:
                 frame = cv2.resize(frame, None, None, fx=scaling_factor,
                     fy=scaling_factor, interpolation=cv2.INTER_LINEAR)

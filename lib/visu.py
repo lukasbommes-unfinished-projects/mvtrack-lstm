@@ -64,7 +64,7 @@ def draw_boxes(frame, bounding_boxes, box_ids=None, scores=None, color=(0, 255, 
         if box_ids is not None:
             frame = cv2.putText(frame, '{}'.format(str(box_ids[i])[:6]), (xmin, ymin+20), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2, cv2.LINE_AA)
         if scores is not None:
-            frame = cv2.putText(frame, '{}'.format(str(scores[i])), (xmin, ymin-5), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2, cv2.LINE_AA)
+            frame = cv2.putText(frame, '{:.4f}'.format(scores[i]), (xmin, ymin-5), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2, cv2.LINE_AA)
     return frame
 
 

@@ -19,7 +19,7 @@ class TrackerOTCD:
         else:
             self.device = device
         self.use_numeric_ids = use_numeric_ids
-        self.max_scale = 1000
+
         self.bbox_reg_mean = torch.tensor([0.0, 0.0, 0.0, 0.0])
         self.bbox_reg_std = torch.tensor([0.1, 0.1, 0.2, 0.2])
 
@@ -56,15 +56,6 @@ class TrackerOTCD:
         idx = np.nonzero(detection_scores >= self.det_conf_threshold)
         detection_boxes[idx]
         return detection_boxes[idx], detection_scores[idx]
-
-
-    def compute_scaling_factor_(self, mvs_residuals):
-        current_scale = np.max(mvs_residuals.shape[:2])
-        self.scaling_needed = False
-        self.scaling_factor = 1
-        if current_scale > self.max_scale:
-            self.scaling_needed = True
-            self.scaling_factor = self.max_scale / current_scale
 
 
     def update(self, mvs_residuals, detection_boxes, detection_scores):
@@ -135,19 +126,12 @@ class TrackerOTCD:
             end_predict = torch.cuda.Event(enable_timing=True)
             start_predict.record()
 
-        #self.compute_scaling_factor_(mvs_residuals)
-
         # if there are no boxes skip prediction step
         if np.shape(self.boxes)[0] == 0:
             return
 
         # check if frame is not a key frame
         if bool(np.sum(mvs_residuals)):
-            # scale mvs_residuals
-            # if self.scaling_needed:
-            #     mvs_residuals = cv2.resize(mvs_residuals, None, None, fx=self.scaling_factor,
-            #         fy=self.scaling_factor, interpolation=cv2.INTER_LINEAR)
-            #     mvs_residuals[:, :, 0:2] = mvs_residuals[:, :, 0:2] * self.scaling_factor
             mvs_residuals = torch.from_numpy(mvs_residuals).type(torch.float).unsqueeze(0)
             mvs_residuals = mvs_residuals.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
             self.last_mvs_residuals = mvs_residuals
@@ -164,9 +148,6 @@ class TrackerOTCD:
         boxes_prev_ = boxes_prev_tmp
         boxes_prev_ = boxes_prev_.unsqueeze(0)  # add batch dimension
 
-        # scale boxes
-        #boxes_prev_ = boxes_prev_ * self.scaling_factor
-
         # change box format to [frame_idx, x1, x2, y1, y2]
         boxes_prev_[..., -2] = boxes_prev_[..., -2] + boxes_prev_[..., -4]
         boxes_prev_[..., -1] = boxes_prev_[..., -1] + boxes_prev_[..., -3]
@@ -174,8 +155,6 @@ class TrackerOTCD:
         boxes_prev_ = boxes_prev_.to(self.device)
         mvs_residuals = self.last_mvs_residuals
         mvs_residuals = mvs_residuals.to(self.device)
-
-        print(boxes_prev.shape)
 
         # feed into model, retrieve output
         with torch.set_grad_enabled(False):
@@ -189,19 +168,11 @@ class TrackerOTCD:
                 torch.cuda.synchronize()
                 self.last_inference_dt = start_inference.elapsed_time(end_inference) / 1000.0
 
-            # make sure output is on CPU
-            velocities_pred = velocities_pred.cpu()
-            velocities_pred = velocities_pred.view(1, -1, 4)
-            #velocities_pred = velocities_pred[0, ...]
+        # make sure output is on CPU
+        velocities_pred = velocities_pred.cpu()
+        velocities_pred = velocities_pred.view(1, -1, 4)
 
         # compute boxes from predicted velocities
-        #self.boxes = box_from_velocities(boxes_prev, velocities_pred).numpy()
-
-        print(velocities_pred.shape)
-        print(boxes_prev.shape)
-        print(boxes_prev_.shape)
-        print(boxes_prev_[..., 1:].cpu().shape)
-
         velocities_pred = velocities_pred.view(-1, 4) * self.bbox_reg_std + self.bbox_reg_mean
         velocities_pred = velocities_pred.view(1, -1, 4)
 
@@ -210,8 +181,6 @@ class TrackerOTCD:
         boxes_pred[..., -2] = boxes_pred[..., -2] - boxes_pred[..., -4]
         boxes_pred[..., -1] = boxes_pred[..., -1] - boxes_pred[..., -3]
         self.boxes = boxes_pred
-
-        print(self.boxes.shape)
 
         if self.measure_timing:
             end_predict.record()
