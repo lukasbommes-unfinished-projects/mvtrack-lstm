@@ -1,71 +1,153 @@
+import os
+import glob
+import torch
 import numpy as np
 import cv2
-from coviar import load
+import coviar
+
+from lib.visu import draw_boxes
+from lib.dataset.loaders import load_detections
+from lib.tracking.tracker_OTCD import TrackerOTCD
 
 
-def scale_image(frame, short_side_min_len=600, long_side_max_len=1000):
-    """Scale the input frame to match minimum and maximum size requirement."""
-    # determine the scaling factor
-    frame_size_min = np.min(frame.shape[0:2])
-    frame_size_max = np.max(frame.shape[0:2])
-    scaling_factor = float(short_side_min_len) / float(frame_size_min)
-    if np.round(scaling_factor * frame_size_max) > long_side_max_len:
-        scaling_factor = float(long_side_max_len) / float(frame_size_max)
-    # scale the frame
-    print(scaling_factor)
-    frame = cv2.resize(frame, None, None, fx=scaling_factor, fy=scaling_factor, interpolation=cv2.INTER_LINEAR)
-    return frame, scaling_factor
+if __name__ == "__main__":
 
+    # reminder: when evaluating h264 models, use h264 videos
+    #video_file = "data/MOT17/train/MOT17-02-FRCNN/MOT17-02-FRCNN-mpeg4-1.0.mp4"  # train set, static cam
+    #video_file = "data/MOT17/train/MOT17-11-FRCNN/MOT17-11-FRCNN-mpeg4-1.0.mp4"  # train set, moving cam
+    #video_file = "data/MOT17/test/MOT17-08-FRCNN/MOT17-08-FRCNN-mpeg4-1.0.mp4"  # test set, static cam
+    #video_file = "data/MOT17/test/MOT17-12-FRCNN/MOT17-12-FRCNN-mpeg4-1.0.mp4"  # test set, moving cam
+    video_file = "data/MOT17/train/MOT17-09-FRCNN/MOT17-09-FRCNN-mpeg4-1.0.mp4"  # val set, static cam
+    #video_file = "data/MOT17/train/MOT17-10-FRCNN/MOT17-10-FRCNN-mpeg4-1.0.mp4"  # val set, moving cam
 
-#sequence = "output.mp4"  # this one works better as it uses the author's encoding settings
-#sequence = "MOT17-09.avi"
-#sequence = "output2.mp4"
-#sequence = "out.mp4"
-sequence = "MOT17-09-FRCNN-mpeg4-1.0.mp4"
-#sequence = "ETH-Pedcross2-mpeg4-1.0.mp4"
+    detections_file = "data/MOT17/train/MOT17-09-FRCNN/det/det.txt"
 
-step_wise = True
-frame_id = 0
-gop_size = 12
+    detector_interval = 20
+    tracker_iou_thres = 0.1
+    det_conf_threshold = 0.5
+    state_thresholds = (0, 1, 10)
+    gop_size = 12
 
-cv2.namedWindow("frame", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("frame", 640, 360)
-cv2.namedWindow("residuals", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("residuals", 640, 360)
+    tracker_baseline = TrackerOTCD(
+        iou_threshold=tracker_iou_thres,
+        det_conf_threshold=det_conf_threshold,
+        state_thresholds=state_thresholds,
+        device=torch.device("cuda:0"),
+        use_numeric_ids=True,
+        measure_timing=True)
 
-for frame_id in range(145):
+    cv2.namedWindow("frame", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("frame", 640, 360)
 
-    print(frame_id)
+    # load detections
+    base_dir = str.split(video_file, "/")[:-1]
+    num_frames = len(glob.glob(os.path.join(*base_dir, 'img1', '*.jpg')))
+    det_boxes_all, det_scores_all = load_detections(detections_file, num_frames)
 
-    gop_idx = int((frame_id) / gop_size)  # GOP starts from 0, while frame_id  here starts from 1.
-    in_group_idx = int((frame_id) % gop_size)  # the index in the group
+    frame_idx = 0
+    step_wise = True
 
-    ret = load(sequence, gop_idx, in_group_idx, 1, False)
-    #print(np.shape(ret))
+    # box colors
+    color_detection = (0, 0, 150)
+    color_tracker_baseline = (0, 0, 255)
+    color_previous_baseline = (150, 150, 255)
+    #color_tracker_deep = (0, 255, 255)
+    #color_previous_deep = (150, 255, 255)
 
-    #print(np.min(ret), np.max(ret))
-    #print(ret.dtype)
+    prev_boxes_baseline = None
+    #prev_boxes_deep = None
 
-    image = np.zeros(shape=(ret.shape[0], int(ret.shape[1]), 3))#, fill_value=int(np.max(ret)), dtype=np.float32)
-    image[:, :, 2] = ret[:, :, 0]  # red channel corresponds to x component of MVs
-    image[:, :, 1] = ret[:, :, 1]  # green channel corresponds to y component of MVs
-    image = image.astype(np.int8)
+    while True:
 
-    residuals = load(sequence, gop_idx, in_group_idx, 2, False)
-    residuals = residuals.astype(np.int8)
+        # load frame
+        frame_file = os.path.join(*base_dir, "img1", "{:06d}.jpg".format(frame_idx + 1))
+        frame = cv2.imread(frame_file, cv2.IMREAD_COLOR)
 
-    cv2.imshow("frame", image)
-    cv2.imshow("residuals", residuals)
-    key = cv2.waitKey(25)
-    if not step_wise and key == ord('s'):
-        step_wise = True
-    if key == ord('q'):
-        break
-    if step_wise:
-        while True:
-            key = cv2.waitKey(1)
-            if key == ord('s'):
-                break
-            elif key == ord('a'):
-                step_wise = False
-                break
+        # load mvs_residuals
+        gop_idx = int(frame_idx / gop_size)  # GOP starts from 0, while frame_id here starts from 1.
+        in_group_idx = int(frame_idx % gop_size)  # the index in the group
+        mv = coviar.load(video_file, gop_idx, in_group_idx, 1, False)
+        residual = coviar.load(video_file, gop_idx, in_group_idx, 2, False)
+        mvs_residuals = np.zeros((residual.shape[0], residual.shape[1], 5))
+        mvs_residuals[:, :, 0:2] = mv  # XY
+        mvs_residuals[:, :, 2:5] = residual  # BGR
+
+        # draw info
+        #frame = cv2.putText(frame, "Frame Type: {}".format(frame_type), (1000, 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+
+        # draw color legend
+        frame = cv2.putText(frame, "Detection", (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_detection, 2, cv2.LINE_AA)
+        frame = cv2.putText(frame, "Baseline Previous Prediction", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_previous_baseline, 2, cv2.LINE_AA)
+        frame = cv2.putText(frame, "Baseline Tracker Prediction", (15, 95), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_tracker_baseline, 2, cv2.LINE_AA)
+        #frame = cv2.putText(frame, "Deep Previous Prediction", (15, 130), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_previous_deep, 2, cv2.LINE_AA)
+        #frame = cv2.putText(frame, "Deep Tracker Prediction", (15, 165), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_tracker_deep, 2, cv2.LINE_AA)
+
+        # update with detections
+        if frame_idx % detector_interval == 0:
+            det_boxes = det_boxes_all[frame_idx]
+            det_scores = det_scores_all[frame_idx]
+
+            tracker_baseline.update(mvs_residuals, det_boxes, det_scores)
+            #tracker_deep.update(motion_vectors, frame_type, det_boxes, det_scores)
+            if prev_boxes_baseline is not None:
+               frame = draw_boxes(frame, prev_boxes_baseline, color=color_previous_baseline)
+            prev_boxes_baseline = np.copy(det_boxes)
+            # if prev_boxes_deep is not None:
+            #    frame = draw_boxes(frame, prev_boxes_deep, color=color_previous_deep)
+            # prev_boxes_deep = np.copy(det_boxes)
+
+        # prediction by tracker
+        else:
+            tracker_baseline.predict(mvs_residuals)
+            track_boxes_baseline = tracker_baseline.get_boxes()
+            box_ids_baseline = tracker_baseline.get_box_ids()
+
+            # tracker_deep.predict(motion_vectors, frame_type)
+            # track_boxes_deep = tracker_deep.get_boxes()
+            # box_ids_deep = tracker_deep.get_box_ids()
+
+            if prev_boxes_baseline is not None:
+               frame = draw_boxes(frame, prev_boxes_baseline, color=color_previous_baseline)
+            prev_boxes_baseline = np.copy(track_boxes_baseline)
+
+            # if prev_boxes_deep is not None:
+            #    frame = draw_boxes(frame, prev_boxes_deep, color=color_previous_deep)
+            # prev_boxes_deep = np.copy(track_boxes_deep)
+
+            print(type(track_boxes_baseline))
+            print(track_boxes_baseline)
+            frame = draw_boxes(frame, track_boxes_baseline, box_ids=box_ids_baseline, color=color_tracker_baseline)
+            #frame = draw_boxes(frame, track_boxes_deep, box_ids=box_ids_deep, color=color_tracker_deep)
+
+        frame = draw_boxes(frame, det_boxes, scores=det_scores, color=color_detection)
+
+        # print FPS
+        print("### FPS ###")
+        print("Baseline: Predict {}, Update {}".format(
+            1/tracker_baseline.last_predict_dt, 1/tracker_baseline.last_update_dt))
+        # print("Deep: Predict {}, Update {}, Inference {}".format(
+        #     1/tracker_deep.last_predict_dt, 1/tracker_deep.last_update_dt,
+        #     1/tracker_deep.last_inference_dt))
+
+        frame_idx += 1
+        cv2.imshow("frame", frame)
+
+        # handle key presses
+        # 'q' - Quit the running program
+        # 's' - enter stepwise mode
+        # 'a' - exit stepwise mode
+        key = cv2.waitKey(1)
+        if not step_wise and key == ord('s'):
+            step_wise = True
+        if key == ord('q'):
+            break
+        if step_wise:
+            while True:
+                key = cv2.waitKey(1)
+                if key == ord('s'):
+                    break
+                elif key == ord('a'):
+                    step_wise = False
+                    break
+
+    cv2.destroyAllWindows()

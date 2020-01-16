@@ -20,9 +20,14 @@ from lib.dataset.velocities import box_from_velocities
 
 torch.set_printoptions(precision=10)
 
+# CURRENT ISSUES
+# sigma factor 1.5 for OTCD T-CNN, use appropiate velocity <-> box conversion functions from OTCD
+
 # EXPERIMENTS FOR PAPER:
+# Check if scaling factor in tracknet is really 1/16. might be changed due to additional layers
 # 1) Vary seq_len
 # 2) Try if propagating the hidden and cell states between batches is helpful
+# 3) Try if adding a second LSTM layer helps
 
 num_epochs = 100
 batch_size = 1

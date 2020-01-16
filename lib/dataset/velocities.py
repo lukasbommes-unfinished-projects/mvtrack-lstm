@@ -3,6 +3,35 @@ import torch
 from torch.nn.parameter import Parameter
 
 
+def bbox_transform_inv_otcd(boxes, deltas, batch_size=None, sigma=1/math.sqrt(2)):
+    widths = boxes[:, :, 2] - boxes[:, :, 0] + 1.0
+    heights = boxes[:, :, 3] - boxes[:, :, 1] + 1.0
+    ctr_x = boxes[:, :, 0] + 0.5 * widths
+    ctr_y = boxes[:, :, 1] + 0.5 * heights
+
+    dx = deltas[:, :, 0::4]
+    dy = deltas[:, :, 1::4]
+    dw = deltas[:, :, 2::4]
+    dh = deltas[:, :, 3::4]
+
+    pred_ctr_x = dx * widths.unsqueeze(2) / (math.sqrt(2) * sigma) + ctr_x.unsqueeze(2)
+    pred_ctr_y = dy * heights.unsqueeze(2) / (math.sqrt(2) * sigma) + ctr_y.unsqueeze(2)
+    pred_w = torch.exp(dw) * widths.unsqueeze(2)
+    pred_h = torch.exp(dh) * heights.unsqueeze(2)
+
+    pred_boxes = deltas.clone()
+    # x1
+    pred_boxes[:, :, 0::4] = pred_ctr_x - 0.5 * pred_w
+    # y1
+    pred_boxes[:, :, 1::4] = pred_ctr_y - 0.5 * pred_h
+    # x2
+    pred_boxes[:, :, 2::4] = pred_ctr_x + 0.5 * pred_w
+    # y2
+    pred_boxes[:, :, 3::4] = pred_ctr_y + 0.5 * pred_h
+
+    return pred_boxes  # [x1, y1, x2, y2]
+
+
 # def velocities_from_boxes(boxes_prev, boxes):
 #     """Computes bounding box velocities.
 #
