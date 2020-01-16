@@ -10,7 +10,7 @@ from lib.utils import load_pretrained_weights_to_modified_resnet, \
 
 
 class BaseNet(nn.Module):
-    def __init__(self, pooling_size):
+    def __init__(self):
         super(BaseNet, self).__init__()
 
         self.FIXED_BLOCKS = 1
@@ -37,7 +37,7 @@ class BaseNet(nn.Module):
             resnet.relu]
         self.RCNN_base = nn.Sequential(*base)
 
-        self.RCNN_bbox_base = nn.Conv2d(512, 4*pooling_size*pooling_size, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
+        self.RCNN_bbox_base = nn.Conv2d(512, 4*7*7, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
 
         assert (0 <= self.FIXED_BLOCKS <= 4) # set this value to 0, so we can train all blocks
         if self.FIXED_BLOCKS >= 4: # fix all blocks
@@ -55,12 +55,11 @@ class BaseNet(nn.Module):
         # boxes_prev are of shape [B, K, 5] with batch size B and number of boxes K
         # row format is [frame_idx, xmin, ymin, width, height]
         x = self.RCNN_base(mvs_residuals)
-        x = self.RCNN_bbox_base(x)
         return x
 
 
 class TrackNet(nn.Module):
-    def __init__(self, pooling_size=7):
+    def __init__(self, seq_length=3, pooling_size=7):
         super(TrackNet, self).__init__()
 
         self.DEBUG = False
@@ -68,7 +67,7 @@ class TrackNet(nn.Module):
         self.pooling_size = pooling_size  # the ROIs are split into m x m regions
         self.base_scale = 1/16  # ration of base features to input size
 
-        self.base = BaseNet(pooling_size=pooling_size)
+        self.base = BaseNet()
         # load OTCD weigths into base net
         weights_file = "models/OTCD_trackingnet.pth"
         state_dict = torch.load(weights_file)
@@ -77,9 +76,8 @@ class TrackNet(nn.Module):
         # fix base net weights
         for p in self.base.parameters(): p.requires_grad = False
 
-        num_in_channels = 4*pooling_size*pooling_size
-        self.lstm = Conv2dLSTM(in_channels=num_in_channels,
-                               out_channels=num_in_channels,
+        self.lstm = Conv2dLSTM(in_channels=512,
+                               out_channels=196,
                                kernel_size=3,
                                num_layers=1,
                                bias=True,
@@ -91,13 +89,13 @@ class TrackNet(nn.Module):
                                groups=1)
 
         self.pooling = nn.AvgPool2d(kernel_size=self.pooling_size, stride=self.pooling_size)
-        #self.conv1x1 = nn.Conv2d(196, 4*self.pooling_size*self.pooling_size, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
+        self.conv1x1 = nn.Conv2d(196, 4*self.pooling_size*self.pooling_size, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
         self.ps_roi_pool = torchvision.ops.PSRoIPool(output_size=(self.pooling_size, self.pooling_size), spatial_scale=self.base_scale)
 
         if self.DEBUG:
             print("base net param count: ", count_params(self.base))
             print("lstm param count: ", count_params(self.lstm))
-            #print("conv1x1 param count: ", count_params(self.conv1x1))
+            print("conv1x1 param count: ", count_params(self.conv1x1))
 
 
     def forward(self, mvs_residuals, boxes_prev):
@@ -130,14 +128,14 @@ class TrackNet(nn.Module):
             print(out.device)
 
         # apply conv1x1 element-wise
-        # out_tmp = torch.tensor([]).to(self.device)
-        # for i in range(seq_len):
-        #     out_t = self.conv1x1(out[:, i, :, :, :])  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
-        #     out_t  = out_t.unsqueeze(1)
-        #     out_tmp = torch.cat((out_tmp, out_t ), 1)
-        # out = out_tmp
-        # if self.DEBUG:
-        #     print(out.device)
+        out_tmp = torch.tensor([]).to(self.device)
+        for i in range(seq_len):
+            out_t = self.conv1x1(out[:, i, :, :, :])  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
+            out_t  = out_t.unsqueeze(1)
+            out_tmp = torch.cat((out_tmp, out_t ), 1)
+        out = out_tmp
+        if self.DEBUG:
+            print(out.device)
 
         # apply PS ROI pooling to crop features inside bounding boxes
         out_tmp = torch.tensor([]).to(self.device)

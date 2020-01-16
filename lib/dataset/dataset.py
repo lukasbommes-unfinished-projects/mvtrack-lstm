@@ -14,32 +14,33 @@ from lib.visu import draw_boxes, draw_velocities, draw_motion_vectors
 
 
 class TrackDataset(torch.utils.data.Dataset):
-    def __init__(self, root_dir="data", mode="train", seq_length=3,
+    def __init__(self, root_dir="data", mode="train", batch_size=2, seq_length=3,
         max_scale=1000, gop_size=12, max_num_boxes=55, visu=True):
 
         self.sequences = {
             "train": [
-                "MOT17/train/MOT17-02-FRCNN",  # static cam
-                "MOT17/train/MOT17-04-FRCNN",  # static cam
-                "MOT17/train/MOT17-05-FRCNN",  # moving cam
-                "MOT17/train/MOT17-11-FRCNN",  # moving cam
-                "MOT17/train/MOT17-13-FRCNN",  # moving cam
-                "MOT15/train/ETH-Bahnhof",  # moving cam
-                "MOT15/train/ETH-Sunnyday",  # moving cam
-                "MOT15/train/KITTI-13",  # moving cam
-                "MOT15/train/KITTI-17",  # static cam
-                "MOT15/train/PETS09-S2L1",  # static cam
-                "MOT15/train/TUD-Campus",  # static cam
-                "MOT15/train/TUD-Stadtmitte"  # static cam
+                "MOT17/train/MOT17-02-FRCNN",  # static cam, 600
+                "MOT17/train/MOT17-04-FRCNN",  # static cam, 1050
+                "MOT17/train/MOT17-05-FRCNN",  # moving cam, 837
+                "MOT17/train/MOT17-11-FRCNN",  # moving cam, 900
+                "MOT17/train/MOT17-13-FRCNN",  # moving cam, 750
+                "MOT15/train/ETH-Bahnhof",  # moving cam, 1000,
+                "MOT15/train/ETH-Sunnyday",  # moving cam, 354
+                "MOT15/train/KITTI-13",  # moving cam, 340
+                #"MOT15/train/KITTI-17",  # static cam, 145
+                "MOT15/train/PETS09-S2L1",  # static cam, 795
+                "MOT15/train/TUD-Campus",  # static cam, 71
+                "MOT15/train/TUD-Stadtmitte"  # static cam, 179
             ],
             "val": [
-                "MOT17/train/MOT17-09-FRCNN",  # static cam
-                "MOT17/train/MOT17-10-FRCNN"  # moving cam
+                "MOT17/train/MOT17-09-FRCNN",  # static cam, 525
+                "MOT17/train/MOT17-10-FRCNN"  # moving cam, 654
             ]
         }
 
         self.root_dir = root_dir
         self.mode = mode
+        self.batch_size = batch_size
         self.seq_length = seq_length
         self.max_scale = max_scale
         self.gop_size = gop_size
@@ -57,6 +58,11 @@ class TrackDataset(torch.utils.data.Dataset):
         if self.DEBUG:
             print("Built dataset index.")
 
+        # for DEBUGGING ONLY: Make a very short index with a few samples
+        # self.index = self.index[:4]
+        # for step, item in enumerate(self.index):
+        #     print("step {}:".format(step), item)
+        #print(self.index)
 
     def get_sequence_lengths_(self):
         """Determine number of frames in each video sequence."""
@@ -122,6 +128,7 @@ class TrackDataset(torch.utils.data.Dataset):
                     continue
                 index_tmp.append((sequence_idx, frame_idx))
         # now check how we can arrange the pairs in a sequence
+        index_tmp2 = []
         for idx in range(len(index_tmp)):
             seq_idx_is_same = False
             frame_idx_is_incremental = False
@@ -134,14 +141,26 @@ class TrackDataset(torch.utils.data.Dataset):
                 if set([s2[1]-s1[1] for s1, s2 in zip(subseq, subseq[1:]+subseq[:1])][:-1]) == {1}:
                     frame_idx_is_incremental = True
                 if seq_idx_is_same and frame_idx_is_incremental and len(subseq) == self.seq_length:
-                    self.index.append([subseq[0][0], [s[1] for s in subseq]])
+                    index_tmp2.append([subseq[0][0], [s[1] for s in subseq]])
             except IndexError:
                 continue
+        # remove samples from the index to make the number divisable by the batch size
+        index_tmp3 = []
+        for sequence_idx in range(len(self.sequences[self.mode])):
+            subindex = [idx for idx in index_tmp2 if idx[0] == sequence_idx]
+            remove_num = len(subindex) % self.batch_size
+            for _ in range(remove_num):
+                subindex.pop()
+            index_tmp3.append(subindex)
+        index_tmp3 = [item for sublist in index_tmp3 for item in sublist]  # flatten
+        self.index = index_tmp3
+        # BUGFIX: MOT15/train/KITTI-17 last frame (frame_idx = 144) can not be loaded
 
 
     def compute_scaling_factor_(self, mvs_residuals):
         current_scale = np.max(mvs_residuals.shape[:2])
         scaling_needed = False
+        scaling_factor = 1
         if current_scale > self.max_scale:
             scaling_needed = True
             scaling_factor = self.max_scale / current_scale
@@ -163,7 +182,7 @@ class TrackDataset(torch.utils.data.Dataset):
         boxes_prev_seq = torch.tensor([], dtype=torch.float)
         boxes_seq = torch.tensor([], dtype=torch.float)
         velocities_seq = torch.tensor([], dtype=torch.float)
-        num_boxes_seq = torch.tensor([], dtype=torch.long)
+        num_boxes_mask_seq = torch.tensor([], dtype=torch.bool)
 
         for frame_idx in frame_indices:
             frame = self.load_frame_(sequence_idx, frame_idx)
@@ -232,19 +251,22 @@ class TrackDataset(torch.utils.data.Dataset):
             velocities_padded[:num_boxes, :] = velocities
             velocities = velocities_padded
 
+            # create a mask to revert the padding at a later stage
+            num_boxes_mask = torch.zeros((1, self.max_num_boxes)).bool()
+            num_boxes_mask[0, :num_boxes] = torch.ones(num_boxes,).bool()
+
             frame = torch.from_numpy(frame).type(torch.uint8).unsqueeze(0)
             mvs_residuals = torch.from_numpy(mvs_residuals).type(torch.float).unsqueeze(0)
             velocities = velocities.float().unsqueeze(0)
             boxes_prev = boxes_prev.float().unsqueeze(0)
             boxes = boxes.float().unsqueeze(0)
-            num_boxes = torch.tensor(num_boxes).unsqueeze(0)
 
             frames_seq = torch.cat((frames_seq, frame), axis=0)
             mvs_residuals_seq = torch.cat((mvs_residuals_seq, mvs_residuals), axis=0)
             velocities_seq = torch.cat((velocities_seq, velocities), axis=0)
             boxes_prev_seq = torch.cat((boxes_prev_seq, boxes_prev), axis=0)
             boxes_seq = torch.cat((boxes_seq, boxes), axis=0)
-            num_boxes_seq = torch.cat((num_boxes_seq, num_boxes), axis=0)
+            num_boxes_mask_seq = torch.cat((num_boxes_mask_seq, num_boxes_mask), axis=0)
 
         sample = {
             "frames": frames_seq,       # [seq_len, H, W, C=3], C order BGR
@@ -252,7 +274,7 @@ class TrackDataset(torch.utils.data.Dataset):
             "velocities": velocities_seq,  # [seq_len, max_num_boxes, 4], row format [vxc, vyc, vw, vh]
             "boxes_prev": boxes_prev_seq,  # [seq_len, max_num_boxes, 4], row format [xmin, ymin, w, h]
             "boxes": boxes_seq,            # [seq_len, max_num_boxes, 4], row format [xmin, ymin, w, h]
-            "num_boxes": num_boxes_seq     # [seq_len], number of valid boxes in each seq item, needed to revert padding
+            "num_boxes_mask": num_boxes_mask_seq     # [seq_len], number of valid boxes in each seq item, needed to revert padding
         }
 
         return sample
@@ -262,21 +284,22 @@ class TrackDataset(torch.utils.data.Dataset):
 if __name__ == "__main__":
 
     batch_size = 1
-    seq_len = {"train": 3, "val": 3}
+    seq_len = 3
 
-    datasets = {x: MotionVectorDataset(root_dir='data', mode=x, seq_length=seq_len[x]) for x in ["train", "val"]}
+    datasets = {x: TrackDataset(root_dir='data', mode=x, batch_size=batch_size,
+        seq_length=seq_len) for x in ["train", "val"]}
 
     print("Dataset stats:")
     for mode, dataset in datasets.items():
         print("{} dataset has {} samples".format(mode, len(dataset)))
 
     dataloaders = {x: torch.utils.data.DataLoader(datasets[x], batch_size=batch_size,
-        shuffle=False, num_workers=0) for x in ["train", "val"]}
+        shuffle=False, num_workers=8) for x in ["train", "val"]}
 
     step_wise = True
 
     for batch_idx in range(batch_size):
-        for seq_idx in range(seq_len["train"]):
+        for seq_idx in range(seq_len):
             cv2.namedWindow("frame-{}-{}".format(batch_idx, seq_idx), cv2.WINDOW_NORMAL)
             cv2.resizeWindow("frame-{}-{}".format(batch_idx, seq_idx), 640, 360)
             cv2.namedWindow("motion_vectors-{}-{}".format(batch_idx, seq_idx), cv2.WINDOW_NORMAL)
@@ -288,11 +311,21 @@ if __name__ == "__main__":
 
         print("step", step, "sample", sample["frames"].shape,
             sample["mvs_residuals"].shape, sample["velocities"].shape,
-            sample["boxes"].shape, sample["boxes_prev"].shape, sample["num_boxes"].shape)
+            sample["boxes"].shape, sample["boxes_prev"].shape, sample["num_boxes_mask"].shape)
 
+        # print("boxes_prev", sample["boxes_prev"])
+        # print("boxes", sample["boxes"])
+        # boxes = sample["boxes"]
+        # boxes_prev = sample["boxes_prev"]
+        # num_boxes_mask = sample["num_boxes_mask"]
+        # for batch_idx in range(batch_size):
+        #     boxes_prev_tmp = boxes_prev[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :]
+        #     boxes_tmp = boxes[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :]
+        #     print("boxes_prev", boxes_prev_tmp[:8, :])
+        #     print("boxes", boxes_tmp[:8, :])
 
         for batch_idx in range(batch_size):
-            for seq_idx in range(seq_len["train"]):
+            for seq_idx in range(seq_len):
 
                 frame = sample["frames"][batch_idx, seq_idx, ...].numpy()
 
@@ -303,8 +336,6 @@ if __name__ == "__main__":
                 motion_vectors[..., 2] = mvs_residuals[..., 0]
                 motion_vectors[..., 1] = mvs_residuals[..., 1]
                 motion_vectors = motion_vectors.astype(np.int8)
-
-                print("step: {}".format(step))
 
                 cv2.imshow("frame-{}-{}".format(batch_idx, seq_idx), frame)
                 cv2.imshow("motion_vectors-{}-{}".format(batch_idx, seq_idx), motion_vectors)
