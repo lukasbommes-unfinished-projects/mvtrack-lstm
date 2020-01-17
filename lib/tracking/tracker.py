@@ -13,11 +13,12 @@ from lib.utils import load_pretrained_weights
 
 class TrackerMVLSTM:
     def __init__(self, iou_threshold, det_conf_threshold, state_thresholds,
-        seq_len, weights_file, device=None, use_numeric_ids=False,
+        seq_len, weights_file, sigma=1.5, device=None, use_numeric_ids=False,
         measure_timing=False):
         self.iou_threshold = iou_threshold
         self.det_conf_threshold = det_conf_threshold
         self.seq_len = seq_len
+        self.sigma = sigma
         if device is None:
             self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         else:
@@ -222,7 +223,7 @@ class TrackerMVLSTM:
         boxes_prev = boxes_seq_proc[:, -1, 0:max_num_boxes-boxes_to_pad[-1], 1:]
         #print("boxes_prev shape", boxes_prev.shape)
         #print("velocities_pred shape", velocities_pred.shape)
-        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev.cpu(), deltas=velocities_pred, sigma=1.5, add_one=False).squeeze().numpy()
+        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev.cpu(), deltas=velocities_pred, sigma=self.sigma, add_one=False).squeeze().numpy()
         # change box format to [xmin, ymin, w, h]
         boxes_pred[..., -2] = boxes_pred[..., -2] - boxes_pred[..., -4]
         boxes_pred[..., -1] = boxes_pred[..., -1] - boxes_pred[..., -3]

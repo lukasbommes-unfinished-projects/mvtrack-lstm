@@ -9,14 +9,14 @@ import numpy as np
 import coviar
 
 from lib.dataset.loaders import load_groundtruth
-from lib.dataset.velocities import bbox_transform#, velocities_from_boxes
-from lib.dataset.utils import compute_scaling_factor, convert_to_tlbr
+from lib.dataset.velocities import velocities_from_boxes
+from lib.dataset.utils import compute_scaling_factor
 from lib.visu import draw_boxes, draw_velocities, draw_motion_vectors
 
 
 class TrackDataset(torch.utils.data.Dataset):
     def __init__(self, root_dir="data", mode="train", batch_size=2, seq_length=3,
-        max_scale=1000, gop_size=12, sigma=1.5, max_num_boxes=55, visu=True):
+        max_scale=1000, gop_size=12, max_num_boxes=55, visu=True):
 
         self.sequences = {
             "train": [
@@ -45,7 +45,6 @@ class TrackDataset(torch.utils.data.Dataset):
         self.seq_length = seq_length
         self.max_scale = max_scale
         self.gop_size = gop_size
-        self.sigma = sigma
         self.max_num_boxes = max_num_boxes
         self.visu = visu
         self.DEBUG = True
@@ -223,15 +222,11 @@ class TrackDataset(torch.utils.data.Dataset):
             boxes = torch.from_numpy(gt_boxes[idx_1]).float()
             boxes_prev = torch.from_numpy(gt_boxes_prev[idx_0]).float()
 
+            velocities = velocities_from_boxes(boxes_prev, boxes)
+
             if self.visu:
                 frame = draw_boxes(frame, boxes, gt_ids, color=(255, 255, 255))
                 frame = draw_boxes(frame, boxes_prev, gt_ids_prev, color=(200, 200, 200))
-
-            # compute greound truth velocities
-            #velocities = velocities_from_boxes(boxes_prev, boxes)
-            boxes_tlbr = convert_to_tlbr(boxes)
-            boxes_prev_tlbr = convert_to_tlbr(boxes_prev)
-            velocities = bbox_transform(boxes_prev_tlbr, boxes_tlbr, sigma=self.sigma)
 
             # pad boxes and velocities to the maximum number of ground truth boxes
             num_boxes = (boxes.shape)[0]

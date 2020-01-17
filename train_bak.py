@@ -15,14 +15,14 @@ from coviar import load
 from lib.model.tracknet import TrackNet
 from lib.utils import count_params, weight_checksum, compute_mean_iou
 from lib.dataset.dataset import TrackDataset
-from lib.dataset.velocities import bbox_transform_inv_otcd, box_from_velocities
+from lib.dataset.velocities import box_from_velocities
 from lib.dataset.utils import convert_to_tlbr
 
 
 torch.set_printoptions(precision=10)
 
 # CURRENT ISSUES
-# sigma factor 1.5 for OTCD T-CNN, use appropiate velocity <-> box conversion functions from OTCD (update below for mean IoU comutation)
+# sigma factor 1.5 for OTCD T-CNN, use appropiate velocity <-> box conversion functions from OTCD
 # velocity_pred has to be denormlized with bbox_reg_mean and bbox_reg_std stats
 # see if velocity needs to be normlized with stats before computing loss
 # make sure sigma factor is set correctly
@@ -40,7 +40,6 @@ learning_rate = 0.01  # orange: 0.001, blue-green: 0.01
 weight_decay = 0.0001
 scheduler_steps = [8]
 scheduler_factor = 0.1
-sigma = 1.5
 gpu = 1
 
 write_tensorboard_log = False
@@ -97,7 +96,6 @@ logger.info(f"num_epochs: {num_epochs}")
 logger.info(f"weight_decay: {weight_decay}")
 logger.info(f"scheduler_steps: {scheduler_steps}")
 logger.info(f"scheduler_factor: {scheduler_factor}")
-logger.info(f"sigma: {sigma}")
 logger.info(f"gpu: {gpu}")
 logger.info(f"model: {tracknet}")
 logger.info(f"model requires_grad: {[p.requires_grad for p in tracknet.parameters()]}")
@@ -214,24 +212,6 @@ for epoch in range(num_epochs):
                 mean_iou = mean_iou + compute_mean_iou(boxes_pred, boxes_tmp)
             mean_iou = mean_iou / batch_size
             running_mean_iou.append(mean_iou)
-            # mean_iou = 0
-            # for batch_idx in range(batch_size):
-            #     velocities_pred_tmp = velocities_pred[batch_idx, num_boxes_mask[batch_idx, -1, :], :]
-            #     velocities_tmp = velocities[batch_idx, num_boxes_mask[batch_idx, -1, :], :]
-            #     boxes_prev_tmp = boxes_prev[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :].unsqueeze(0)
-            #     boxes_tmp = boxes[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :].unsqueeze(0)
-            #     #boxes_pred = box_from_velocities(boxes_prev_tmp, velocities_pred_tmp)
-            #     boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev_tmp, deltas=velocities_pred_tmp, sigma=sigma, add_one=False)#.squeeze().numpy()
-            #     if phase == "val":
-            #         print("### batch_idx: {}".format(batch_idx))
-            #         print("velocities", velocities_tmp[:8, :])
-            #         print("velocities_pred", velocities_pred_tmp[:8, :])
-            #         print("boxes_prev", boxes_prev_tmp[:8, :])
-            #         print("boxes", boxes_tmp[:8, :])
-            #         print("boxes_pred", boxes_pred[:8, :])
-            #     mean_iou = mean_iou + compute_mean_iou(boxes_pred, boxes_tmp)
-            # mean_iou = mean_iou / batch_size
-            # running_mean_iou.append(mean_iou)
 
             print(phase, "epoch", epoch, "step", step, "weight_checksum = ", weight_checksum(tracknet), "loss = ", loss.item(), "mean_iou = ", mean_iou)
             if write_tensorboard_log:

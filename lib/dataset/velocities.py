@@ -3,7 +3,7 @@ import torch
 from torch.nn.parameter import Parameter
 
 
-def bbox_transform_inv_otcd(boxes, deltas, batch_size=None, sigma=1/math.sqrt(2), add_one=True):
+def bbox_transform_inv_otcd(boxes, deltas, batch_size=None, sigma=1.5, add_one=True):
     if add_one:  # original OTCD implementation
         widths = boxes[:, :, 2] - boxes[:, :, 0] + 1.0
         heights = boxes[:, :, 3] - boxes[:, :, 1] + 1.0
@@ -36,8 +36,10 @@ def bbox_transform_inv_otcd(boxes, deltas, batch_size=None, sigma=1/math.sqrt(2)
     return pred_boxes  # [x1, y1, x2, y2]
 
 
-def bbox_transform(ex_rois, gt_rois, sigma=1/math.sqrt(2)):
+def bbox_transform(ex_rois, gt_rois, sigma=1.5):
     # boxes are in format [x1, y1, x2, y2]
+    # ex_rois := boxes_prev
+    # gt_rois := boxes
     ex_widths = ex_rois[:, 2] - ex_rois[:, 0] + 1.0
     ex_heights = ex_rois[:, 3] - ex_rois[:, 1] + 1.0
     ex_ctr_x = ex_rois[:, 0] + 0.5 * ex_widths
@@ -59,7 +61,7 @@ def bbox_transform(ex_rois, gt_rois, sigma=1/math.sqrt(2)):
     return targets
 
 
-def bbox_transform_batch(ex_rois, gt_rois, sigma=1/math.sqrt(2)):
+def bbox_transform_batch(ex_rois, gt_rois, sigma=1.5):
 
     if ex_rois.dim() == 2:
         ex_widths = ex_rois[:, 2] - ex_rois[:, 0] + 1.0
