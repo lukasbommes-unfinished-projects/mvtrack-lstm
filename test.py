@@ -144,14 +144,14 @@ if __name__ == "__main__":
         print("###")
         print("frame_idx", frame_idx)
 
-        if frame_idx <= seq_len:
+        if frame_idx < seq_len:
             det_boxes = det_boxes_all[frame_idx] * scaling_factor
             det_scores = det_scores_all[frame_idx]
             tracker_deep.init(mvs_residuals, det_boxes, det_scores)
 
         else:
             # update with detections
-            if (frame_idx - seq_len - 1) % detector_interval == 0:
+            if (frame_idx - seq_len) % detector_interval == 0:
                 det_boxes = det_boxes_all[frame_idx] * scaling_factor
                 det_scores = det_scores_all[frame_idx]
                 tracker_deep.update(mvs_residuals, det_boxes, det_scores)
@@ -175,9 +175,15 @@ if __name__ == "__main__":
             frame = draw_boxes(frame, det_boxes, scores=det_scores, color=color_detection)
 
             # print FPS
-            #print("Deep: Predict {}, Update {}, Inference {}".format(
-            #    1/tracker_deep.last_predict_dt, 1/tracker_deep.last_update_dt,
-            #    1/tracker_deep.last_inference_dt))
+            print("Deep: Predict {}, Update {}, Inference {}".format(
+               1/tracker_deep.last_predict_dt, 1/tracker_deep.last_update_dt,
+               1/tracker_deep.last_inference_dt))
+
+        # print("In test.py")
+        # for i, t in enumerate(list(tracker_deep.mvs_residuals_seq)):
+        #     t = t[:, :, 2:5]
+        #     t = t.astype(np.int8)
+        #     cv2.imshow("{}".format(i), t)
 
         frame_idx += 1
         cv2.imshow("frame", frame)

@@ -39,10 +39,10 @@ scheduler_steps = [8]
 scheduler_factor = 0.1
 gpu = 1
 
-write_tensorboard_log = True
-save_model = True
-log_to_file = True
-save_model_every_epoch = True
+write_tensorboard_log = False
+save_model = False
+log_to_file = False
+save_model_every_epoch = False
 
 datasets = {x: TrackDataset(root_dir='data', mode=x, batch_size=batch_size,
     seq_length=seq_len) for x in ["train", "val"]}

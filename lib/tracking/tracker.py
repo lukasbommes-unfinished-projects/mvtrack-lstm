@@ -40,7 +40,6 @@ class TrackerMVLSTM:
         self.next_id = 1
 
         # cor storing sequence of subsequent mvs_residuals and boxes for use with LSTM
-        self.first_init_call = False
         self.mvs_residuals_seq = deque(maxlen=seq_len)
         self.boxes_seq = deque(maxlen=seq_len)
         self.boxes_init = np.empty(shape=(0, 4))
@@ -85,13 +84,10 @@ class TrackerMVLSTM:
 
         # store boxes and mvs_residuals for later use with LSTM, skip first mvs_residual
         self.boxes_seq.append(np.copy(self.boxes_init))
-        if self.first_init_call:
-            self.mvs_residuals_seq.append(np.copy(mvs_residuals))
-        self.first_init_call = True
+        self.mvs_residuals_seq.append(np.copy(mvs_residuals))
 
-        print("Init")
-        #print("mvs shape", self.mvs_residuals_seq.shape)
-        print("boxes", self.boxes_seq)
+        #print("Init")
+        #print("boxes", self.boxes_seq)
 
 
     def update(self, mvs_residuals, detection_boxes, detection_scores):
@@ -158,9 +154,8 @@ class TrackerMVLSTM:
             torch.cuda.synchronize()
             self.last_update_dt = start_update.elapsed_time(end_update) / 1000.0
 
-        print("Update")
-        #print("mvs shape", self.mvs_residuals_seq.shape)
-        print("boxes", self.boxes_seq)
+        #print("Update")
+        #print("boxes", self.boxes_seq)
 
 
     def predict(self, mvs_residuals, save_last_boxes=True):
@@ -196,7 +191,7 @@ class TrackerMVLSTM:
         boxes_seq_proc = boxes_seq_proc.to(self.device)
         mvs_residuals_seq = mvs_residuals_seq.to(self.device)
 
-        print("max_num_boxes", max_num_boxes)
+        #print("max_num_boxes", max_num_boxes)
 
         # feed into model, retrieve output
         with torch.set_grad_enabled(False):
@@ -205,10 +200,10 @@ class TrackerMVLSTM:
                 start_inference = torch.cuda.Event(enable_timing=True)
                 end_inference = torch.cuda.Event(enable_timing=True)
                 start_inference.record()
-            print("mvs_residuals_seq shape", mvs_residuals_seq.shape)
-            print("boxes_seq_proc shape", boxes_seq_proc.shape)
+            #print("mvs_residuals_seq shape", mvs_residuals_seq.shape)
+            #print("boxes_seq_proc shape", boxes_seq_proc.shape)
             velocities_pred = self.model(mvs_residuals_seq, boxes_seq_proc)
-            print("velocities_pred", velocities_pred)
+            #print("velocities_pred", velocities_pred)
             if self.measure_timing:
                 end_inference.record()
                 torch.cuda.synchronize()
@@ -222,26 +217,25 @@ class TrackerMVLSTM:
         velocities_pred = velocities_pred.view(-1, 4) * self.bbox_reg_std + self.bbox_reg_mean
         velocities_pred = velocities_pred.view(1, -1, 4)
         velocities_pred = velocities_pred[:, 0:max_num_boxes-boxes_to_pad[-1], :]
-        print("boxes_to_pad", boxes_to_pad)
+        #print("boxes_to_pad", boxes_to_pad)
 
         boxes_prev = boxes_seq_proc[:, -1, 0:max_num_boxes-boxes_to_pad[-1], 1:]
-        print("boxes_prev shape", boxes_prev.shape)
-        print("velocities_pred shape", velocities_pred.shape)
+        #print("boxes_prev shape", boxes_prev.shape)
+        #print("velocities_pred shape", velocities_pred.shape)
         boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev.cpu(), deltas=velocities_pred, sigma=1.5, add_one=False).squeeze().numpy()
         # change box format to [xmin, ymin, w, h]
         boxes_pred[..., -2] = boxes_pred[..., -2] - boxes_pred[..., -4]
         boxes_pred[..., -1] = boxes_pred[..., -1] - boxes_pred[..., -3]
         self.boxes = boxes_pred
 
-        print("boxes after predict: ", self.boxes)
+        #print("boxes after predict: ", self.boxes)
 
         # save boxes for later steps as input to LSTM
         if save_last_boxes:
             self.boxes_seq.append(np.copy(self.boxes))
 
-            print("Predict")
-            #print("mvs shape", self.mvs_residuals_seq.shape)
-            print("boxes", self.boxes_seq)
+            #print("Predict")
+            #print("boxes", self.boxes_seq)
 
         if self.measure_timing:
             end_predict.record()
@@ -252,9 +246,7 @@ class TrackerMVLSTM:
     def get_boxes(self):
         # get only those boxes with state "confirmed"
         mask = [target_state == "confirmed" for target_state in self.target_states]
-        print("mask", mask)
         boxes_filtered = self.boxes[mask]
-        print("boxes_filtered shape", boxes_filtered.shape)
         return boxes_filtered
 
 
