@@ -1,6 +1,5 @@
 import uuid
 import torch
-import copy
 import numpy as np
 import cv2
 from collections import deque
@@ -41,9 +40,9 @@ class TrackerMVLSTM:
 
         # cor storing sequence of subsequent mvs_residuals and boxes for use with LSTM
         self.first_init_call = False
-        self.mvs_residuals_seq = deque(maxlen=seq_len)
-        self.boxes_seq = deque(maxlen=seq_len)
-        self.boxes_init = np.empty(shape=(0, 4))
+        self.mvs_residuals_seq = deque(maxlen=seq_len)#torch.zeros(1, self.seq_len, 5, 600, 1000)
+        self.boxes_seq = deque(maxlen=seq_len+1)#torch.zeros(1, self.seq_len, 1, 5)
+        #self.last_mvs_residuals = torch.zeros(size=(1, 5, 600, 1000))
 
         self.model = TrackNet()
         self.model = self.model.to(self.device)
@@ -60,6 +59,7 @@ class TrackerMVLSTM:
 
     def _filter_low_confidence_detections(self, detection_boxes, detection_scores):
         idx = np.nonzero(detection_scores >= self.det_conf_threshold)
+        detection_boxes[idx]
         return detection_boxes[idx], detection_scores[idx]
 
 
@@ -69,28 +69,35 @@ class TrackerMVLSTM:
             detection_boxes, detection_scores = self._filter_low_confidence_detections(detection_boxes, detection_scores)
 
         # match predicted (tracked) boxes with detected boxes
-        matches, unmatched_trackers, unmatched_detectors = match_bounding_boxes(self.boxes_init, detection_boxes, self.iou_threshold)
+        matches, unmatched_trackers, unmatched_detectors = match_bounding_boxes(self.boxes, detection_boxes, self.iou_threshold)
 
         # handle matches by incremeting the counter for redetection and resetting the one for lost
         for d, t in matches:
-            self.boxes_init[t] = detection_boxes[d]
+            self.boxes[t] = detection_boxes[d]
 
         # handle unmatched detections by spawning new trackers in pending state
         for d in unmatched_detectors:
-            self.boxes_init = np.vstack((self.boxes_init, detection_boxes[d]))
+            if self.use_numeric_ids:
+                self.box_ids.append(self.next_id)
+                self.next_id += 1
+            else:
+                uid = uuid.uuid4()
+                self.box_ids.append(uid)
+            self.boxes = np.vstack((self.boxes, detection_boxes[d]))
 
         # handle unmatched tracker predictions by counting how often a target got lost subsequently
         for t in unmatched_trackers:
-            self.boxes_init = np.delete(self.boxes_init, t, axis=0)
+            self.boxes = np.delete(self.boxes, t, axis=0)
+            self.box_ids.pop(t)
 
         # store boxes and mvs_residuals for later use with LSTM, skip first mvs_residual
-        self.boxes_seq.append(np.copy(self.boxes_init))
+        self.boxes_seq.append(np.copy(self.boxes))
         if self.first_init_call:
             self.mvs_residuals_seq.append(np.copy(mvs_residuals))
         self.first_init_call = True
 
         print("Init")
-        #print("mvs shape", self.mvs_residuals_seq.shape)
+        print("mvs", self.mvs_residuals_seq)
         print("boxes", self.boxes_seq)
 
 
@@ -105,8 +112,7 @@ class TrackerMVLSTM:
             detection_boxes, detection_scores = self._filter_low_confidence_detections(detection_boxes, detection_scores)
 
         # bring boxes into next state
-        if np.shape(self.boxes)[0] > 0:
-            self.predict(mvs_residuals, save_last_boxes=False)  # we want to save boxes only after association
+        self.predict(mvs_residuals, save_last_boxes=False)  # we want to save boxes only after association
 
         # match predicted (tracked) boxes with detected boxes
         matches, unmatched_trackers, unmatched_detectors = match_bounding_boxes(self.boxes, detection_boxes, self.iou_threshold)
@@ -159,8 +165,22 @@ class TrackerMVLSTM:
             self.last_update_dt = start_update.elapsed_time(end_update) / 1000.0
 
         print("Update")
-        #print("mvs shape", self.mvs_residuals_seq.shape)
+        print("mvs", self.mvs_residuals_seq)
         print("boxes", self.boxes_seq)
+
+
+    # def preprocess_boxes_(self, boxes):
+    #
+    #
+    # def preprocess_mvs_residuals(self, mvs_residuals):
+    #
+    #     # perform preprocessing steps
+    #     mvs_residuals = torch.from_numpy(mvs_residuals).type(torch.float).unsqueeze(0)
+    #     mvs_residuals = mvs_residuals.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+    #
+    #     # check length of mvs_residuals in seq dimension
+    #
+    #     # if length equals seq_len, remove oldest mvs_residuals and attach a new one
 
 
     def predict(self, mvs_residuals, save_last_boxes=True):
@@ -172,31 +192,38 @@ class TrackerMVLSTM:
         # save mvs_residuals for later steps as input to LSTM
         self.mvs_residuals_seq.append(np.copy(mvs_residuals))
 
-        # preprocess stored boxes
-        boxes_seq_proc = copy.copy(self.boxes_seq)
-        boxes_seq_proc = list(boxes_seq_proc)
-        max_num_boxes = np.max([b.shape[0] for b in boxes_seq_proc])
-        boxes_to_pad = [max_num_boxes-b.shape[0] for b in boxes_seq_proc]
-        boxes_seq_proc = [np.pad(b, ((0, p), (1, 0)), 'constant', constant_values=0) for b, p in zip(boxes_seq_proc, boxes_to_pad)]
+        # if there are no boxes skip prediction step
+        #if np.shape(self.boxes)[0] == 0:
+        #    return
 
-        boxes_seq_proc = np.stack(boxes_seq_proc, axis=0)  # stack along first axis
-        boxes_seq_proc = torch.from_numpy(boxes_seq_proc).type(torch.float).unsqueeze(0)  # add batch dimension
+        # TODO: call preprocessing function to enqueue new boxes and motion vectors
+        # into the
+
+        # check if frame is not a key frame
+        if bool(np.sum(mvs_residuals)):
+            mvs_residuals = torch.from_numpy(mvs_residuals).type(torch.float).unsqueeze(0)
+            mvs_residuals = mvs_residuals.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+            self.last_mvs_residuals = mvs_residuals
+
+        # pre process boxes
+        boxes_prev = np.copy(self.boxes)
+        boxes_prev = torch.from_numpy(boxes_prev)
+        num_boxes = (boxes_prev.shape)[0]
+
+        # insert batch index
+        boxes_prev_ = boxes_prev.clone()
+        boxes_prev_tmp = torch.zeros(num_boxes, 5).float()
+        boxes_prev_tmp[:, 1:] = boxes_prev_
+        boxes_prev_ = boxes_prev_tmp
+        boxes_prev_ = boxes_prev_.unsqueeze(0)  # add batch dimension
 
         # change box format to [frame_idx, x1, x2, y1, y2]
-        boxes_seq_proc[..., -2] = boxes_seq_proc[..., -2] + boxes_seq_proc[..., -4]
-        boxes_seq_proc[..., -1] = boxes_seq_proc[..., -1] + boxes_seq_proc[..., -3]
+        boxes_prev_[..., -2] = boxes_prev_[..., -2] + boxes_prev_[..., -4]
+        boxes_prev_[..., -1] = boxes_prev_[..., -1] + boxes_prev_[..., -3]
 
-        # preprocess stored mvs_residuals
-        mvs_residuals_seq = copy.copy(self.mvs_residuals_seq)
-        mvs_residuals_seq = list(mvs_residuals_seq)
-        mvs_residuals_seq = np.stack(mvs_residuals_seq, axis=0)
-        mvs_residuals_seq = torch.from_numpy(mvs_residuals_seq).type(torch.float).unsqueeze(0)
-        mvs_residuals_seq = mvs_residuals_seq.permute(0, 1, 4, 2, 3)  # [B, S, H, W, C] -> [B, S, C, H, W]
-
-        boxes_seq_proc = boxes_seq_proc.to(self.device)
-        mvs_residuals_seq = mvs_residuals_seq.to(self.device)
-
-        print("max_num_boxes", max_num_boxes)
+        boxes_prev_ = boxes_prev_.to(self.device)
+        mvs_residuals = self.last_mvs_residuals
+        mvs_residuals = mvs_residuals.to(self.device)
 
         # feed into model, retrieve output
         with torch.set_grad_enabled(False):
@@ -205,10 +232,7 @@ class TrackerMVLSTM:
                 start_inference = torch.cuda.Event(enable_timing=True)
                 end_inference = torch.cuda.Event(enable_timing=True)
                 start_inference.record()
-            print("mvs_residuals_seq shape", mvs_residuals_seq.shape)
-            print("boxes_seq_proc shape", boxes_seq_proc.shape)
-            velocities_pred = self.model(mvs_residuals_seq, boxes_seq_proc)
-            print("velocities_pred", velocities_pred)
+            velocities_pred = self.model(mvs_residuals, boxes_prev_)
             if self.measure_timing:
                 end_inference.record()
                 torch.cuda.synchronize()
@@ -221,26 +245,19 @@ class TrackerMVLSTM:
         # compute boxes from predicted velocities
         velocities_pred = velocities_pred.view(-1, 4) * self.bbox_reg_std + self.bbox_reg_mean
         velocities_pred = velocities_pred.view(1, -1, 4)
-        velocities_pred = velocities_pred[:, 0:max_num_boxes-boxes_to_pad[-1], :]
-        print("boxes_to_pad", boxes_to_pad)
 
-        boxes_prev = boxes_seq_proc[:, -1, 0:max_num_boxes-boxes_to_pad[-1], 1:]
-        print("boxes_prev shape", boxes_prev.shape)
-        print("velocities_pred shape", velocities_pred.shape)
-        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev.cpu(), deltas=velocities_pred, sigma=1.5, add_one=False).squeeze().numpy()
+        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev_[..., 1:].cpu(), deltas=velocities_pred, sigma=1.5).squeeze().numpy()
         # change box format to [xmin, ymin, w, h]
         boxes_pred[..., -2] = boxes_pred[..., -2] - boxes_pred[..., -4]
         boxes_pred[..., -1] = boxes_pred[..., -1] - boxes_pred[..., -3]
         self.boxes = boxes_pred
-
-        print("boxes after predict: ", self.boxes)
 
         # save boxes for later steps as input to LSTM
         if save_last_boxes:
             self.boxes_seq.append(np.copy(self.boxes))
 
             print("Predict")
-            #print("mvs shape", self.mvs_residuals_seq.shape)
+            print("mvs", self.mvs_residuals_seq)
             print("boxes", self.boxes_seq)
 
         if self.measure_timing:
@@ -252,9 +269,7 @@ class TrackerMVLSTM:
     def get_boxes(self):
         # get only those boxes with state "confirmed"
         mask = [target_state == "confirmed" for target_state in self.target_states]
-        print("mask", mask)
         boxes_filtered = self.boxes[mask]
-        print("boxes_filtered shape", boxes_filtered.shape)
         return boxes_filtered
 
 

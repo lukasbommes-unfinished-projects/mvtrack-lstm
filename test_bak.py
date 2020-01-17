@@ -8,8 +8,7 @@ import coviar
 from lib.visu import draw_boxes
 from lib.dataset.loaders import load_detections
 from lib.dataset.utils import compute_scaling_factor
-from lib.tracking.tracker_otcd import TrackerOTCD
-from lib.tracking.tracker import TrackerMVLSTM
+from lib.tracking.tracker_OTCD import TrackerOTCD
 
 
 if __name__ == "__main__":
@@ -28,23 +27,12 @@ if __name__ == "__main__":
     tracker_iou_thres = 0.1
     det_conf_threshold = 0.5
     state_thresholds = (0, 1, 10)
-    seq_len = 3
     gop_size = 12
 
     tracker_baseline = TrackerOTCD(
         iou_threshold=tracker_iou_thres,
         det_conf_threshold=det_conf_threshold,
         state_thresholds=state_thresholds,
-        device=torch.device("cuda:0"),
-        use_numeric_ids=True,
-        measure_timing=True)
-
-    tracker_deep = TrackerMVLSTM(
-        iou_threshold=tracker_iou_thres,
-        det_conf_threshold=det_conf_threshold,
-        state_thresholds=state_thresholds,
-        seq_len=seq_len,
-        weights_file="models/tracker/2020-01-15_08-49-00/model_epoch_0.pth",
         device=torch.device("cuda:0"),
         use_numeric_ids=True,
         measure_timing=True)
@@ -64,27 +52,17 @@ if __name__ == "__main__":
     color_detection = (0, 0, 150)
     color_tracker_baseline = (0, 0, 255)
     color_previous_baseline = (150, 150, 255)
-    color_tracker_deep = (0, 255, 255)
-    color_previous_deep = (150, 255, 255)
+    #color_tracker_deep = (0, 255, 255)
+    #color_previous_deep = (150, 255, 255)
 
     prev_boxes_baseline = None
-    prev_boxes_deep = None
-
-    print([d*0.520833333 for d in det_boxes_all[:4]])
-    print(det_scores_all[:4])
+    #prev_boxes_deep = None
 
     while True:
 
         # load frame
         frame_file = os.path.join(*base_dir, "img1", "{:06d}.jpg".format(frame_idx + 1))
         frame = cv2.imread(frame_file, cv2.IMREAD_COLOR)
-
-        # draw color legend
-        frame = cv2.putText(frame, "Detection", (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_detection, 2, cv2.LINE_AA)
-        frame = cv2.putText(frame, "Baseline Previous Prediction", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_previous_baseline, 2, cv2.LINE_AA)
-        frame = cv2.putText(frame, "Baseline Tracker Prediction", (15, 95), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_tracker_baseline, 2, cv2.LINE_AA)
-        frame = cv2.putText(frame, "Deep Previous Prediction", (15, 130), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_previous_deep, 2, cv2.LINE_AA)
-        frame = cv2.putText(frame, "Deep Tracker Prediction", (15, 165), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_tracker_deep, 2, cv2.LINE_AA)
 
         # load mvs_residuals
         gop_idx = int(frame_idx / gop_size)  # GOP starts from 0, while frame_id here starts from 1.
@@ -105,18 +83,26 @@ if __name__ == "__main__":
                 fy=scaling_factor, interpolation=cv2.INTER_LINEAR)
             mvs_residuals[:, :, 0:2] = mvs_residuals[:, :, 0:2] * scaling_factor
 
-        ########################################################################
-        ### Tracker OTCD
+        # draw color legend
+        frame = cv2.putText(frame, "Detection", (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_detection, 2, cv2.LINE_AA)
+        frame = cv2.putText(frame, "Baseline Previous Prediction", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_previous_baseline, 2, cv2.LINE_AA)
+        frame = cv2.putText(frame, "Baseline Tracker Prediction", (15, 95), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_tracker_baseline, 2, cv2.LINE_AA)
+        #frame = cv2.putText(frame, "Deep Previous Prediction", (15, 130), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_previous_deep, 2, cv2.LINE_AA)
+        #frame = cv2.putText(frame, "Deep Tracker Prediction", (15, 165), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_tracker_deep, 2, cv2.LINE_AA)
 
         # update with detections
         if frame_idx % detector_interval == 0:
             det_boxes = det_boxes_all[frame_idx] * scaling_factor
-            det_scores = det_scores_all[frame_idx]
+            det_scores = det_scores_all[frame_idx] * scaling_factor
 
             tracker_baseline.update(mvs_residuals, det_boxes, det_scores)
+            #tracker_deep.update(motion_vectors, frame_type, det_boxes, det_scores)
             if prev_boxes_baseline is not None:
                frame = draw_boxes(frame, prev_boxes_baseline, color=color_previous_baseline)
             prev_boxes_baseline = np.copy(det_boxes)
+            # if prev_boxes_deep is not None:
+            #    frame = draw_boxes(frame, prev_boxes_deep, color=color_previous_deep)
+            # prev_boxes_deep = np.copy(det_boxes)
 
         # prediction by tracker
         else:
@@ -124,60 +110,32 @@ if __name__ == "__main__":
             track_boxes_baseline = tracker_baseline.get_boxes()
             box_ids_baseline = tracker_baseline.get_box_ids()
 
+            # tracker_deep.predict(motion_vectors, frame_type)
+            # track_boxes_deep = tracker_deep.get_boxes()
+            # box_ids_deep = tracker_deep.get_box_ids()
+
             if prev_boxes_baseline is not None:
                frame = draw_boxes(frame, prev_boxes_baseline, color=color_previous_baseline)
             prev_boxes_baseline = np.copy(track_boxes_baseline)
 
+            # if prev_boxes_deep is not None:
+            #    frame = draw_boxes(frame, prev_boxes_deep, color=color_previous_deep)
+            # prev_boxes_deep = np.copy(track_boxes_deep)
+
+            print(type(track_boxes_baseline))
+            print(track_boxes_baseline)
             frame = draw_boxes(frame, track_boxes_baseline, box_ids=box_ids_baseline, color=color_tracker_baseline)
+            #frame = draw_boxes(frame, track_boxes_deep, box_ids=box_ids_deep, color=color_tracker_deep)
 
         frame = draw_boxes(frame, det_boxes, scores=det_scores, color=color_detection)
 
         # print FPS
-        #print("### FPS ###")
-        #print("Baseline: Predict {}, Update {}".format(
-        #    1/tracker_baseline.last_predict_dt, 1/tracker_baseline.last_update_dt))
-
-
-        ########################################################################
-        ### Tracker MVLSTM
-
-        print("###")
-        print("frame_idx", frame_idx)
-
-        if frame_idx <= seq_len:
-            det_boxes = det_boxes_all[frame_idx] * scaling_factor
-            det_scores = det_scores_all[frame_idx]
-            tracker_deep.init(mvs_residuals, det_boxes, det_scores)
-
-        else:
-            # update with detections
-            if (frame_idx - seq_len - 1) % detector_interval == 0:
-                det_boxes = det_boxes_all[frame_idx] * scaling_factor
-                det_scores = det_scores_all[frame_idx]
-                tracker_deep.update(mvs_residuals, det_boxes, det_scores)
-
-                if prev_boxes_deep is not None:
-                   frame = draw_boxes(frame, prev_boxes_deep, color=color_previous_deep)
-                prev_boxes_deep = np.copy(det_boxes)
-
-            # prediction by tracker
-            else:
-                tracker_deep.predict(mvs_residuals)
-                track_boxes_deep = tracker_deep.get_boxes()
-                box_ids_deep = tracker_deep.get_box_ids()
-
-                if prev_boxes_deep is not None:
-                   frame = draw_boxes(frame, prev_boxes_deep, color=color_previous_deep)
-                prev_boxes_deep = np.copy(track_boxes_deep)
-
-                frame = draw_boxes(frame, track_boxes_deep, box_ids=box_ids_deep, color=color_tracker_deep)
-
-            frame = draw_boxes(frame, det_boxes, scores=det_scores, color=color_detection)
-
-            # print FPS
-            #print("Deep: Predict {}, Update {}, Inference {}".format(
-            #    1/tracker_deep.last_predict_dt, 1/tracker_deep.last_update_dt,
-            #    1/tracker_deep.last_inference_dt))
+        print("### FPS ###")
+        print("Baseline: Predict {}, Update {}".format(
+            1/tracker_baseline.last_predict_dt, 1/tracker_baseline.last_update_dt))
+        # print("Deep: Predict {}, Update {}, Inference {}".format(
+        #     1/tracker_deep.last_predict_dt, 1/tracker_deep.last_update_dt,
+        #     1/tracker_deep.last_inference_dt))
 
         frame_idx += 1
         cv2.imshow("frame", frame)

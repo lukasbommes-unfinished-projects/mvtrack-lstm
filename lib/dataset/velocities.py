@@ -3,9 +3,13 @@ import torch
 from torch.nn.parameter import Parameter
 
 
-def bbox_transform_inv_otcd(boxes, deltas, batch_size=None, sigma=1/math.sqrt(2)):
-    widths = boxes[:, :, 2] - boxes[:, :, 0] + 1.0
-    heights = boxes[:, :, 3] - boxes[:, :, 1] + 1.0
+def bbox_transform_inv_otcd(boxes, deltas, batch_size=None, sigma=1/math.sqrt(2), add_one=True):
+    if add_one:  # original OTCD implementation
+        widths = boxes[:, :, 2] - boxes[:, :, 0] + 1.0
+        heights = boxes[:, :, 3] - boxes[:, :, 1] + 1.0
+    else: # my correction which keeps boxes constant when deltas are zero
+        widths = boxes[:, :, 2] - boxes[:, :, 0]
+        heights = boxes[:, :, 3] - boxes[:, :, 1]
     ctr_x = boxes[:, :, 0] + 0.5 * widths
     ctr_y = boxes[:, :, 1] + 0.5 * heights
 

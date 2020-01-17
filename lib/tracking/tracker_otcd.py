@@ -3,9 +3,9 @@ import torch
 import numpy as np
 import cv2
 
-from lib.model.tracknet_OTCD import TrackNetOTCD
+from lib.model.tracknet_otcd import TrackNetOTCD
 from lib.tracking.utils import match_bounding_boxes
-from lib.dataset.velocities import box_from_velocities, bbox_transform_inv_otcd
+from lib.dataset.velocities import bbox_transform_inv_otcd
 
 
 class TrackerOTCD:
@@ -33,7 +33,7 @@ class TrackerOTCD:
 
         self.boxes = np.empty(shape=(0, 4))
         self.box_ids = []
-        self.last_mvs_residuals = torch.zeros(size=(1, 600, 1000, 3))
+        self.last_mvs_residuals = torch.zeros(size=(1, 5, 600, 1000))
         self.next_id = 1
 
         self.model = TrackNetOTCD()
