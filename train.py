@@ -13,10 +13,11 @@ from torch.utils.tensorboard import SummaryWriter
 from coviar import load
 
 from lib.model.tracknet import TrackNet
+from lib.loss import smooth_l1_loss
 from lib.utils import count_params, weight_checksum, compute_mean_iou
 from lib.dataset.dataset import TrackDataset
 from lib.dataset.velocities import bbox_transform_inv_otcd, box_from_velocities
-from lib.dataset.utils import convert_to_tlbr
+from lib.dataset.utils import convert_to_tlbr, convert_to_tlwh
 
 
 torch.set_printoptions(precision=10)
@@ -32,21 +33,26 @@ torch.set_printoptions(precision=10)
 # 1) Vary seq_len
 # 2) Try if propagating the hidden and cell states between batches is helpful
 # 3) Try if adding a second LSTM layer helps
+# 4) Try if unlocking weights of some of the top layers (e.g. conv1x1) for training helps
 
 num_epochs = 100
 batch_size = 1
 seq_len = 3
-learning_rate = 0.01  # orange: 0.001, blue-green: 0.01
+learning_rate = 0.01  # pink: 0.1, türkis: 0.01, , # orange: 0.001, blue-green: 0.01
 weight_decay = 0.0001
-scheduler_steps = [8]
+scheduler_steps = [8, 16, 24]
 scheduler_factor = 0.1
 sigma = 1.5
-gpu = 1
+gpu = 0
 
-write_tensorboard_log = False
-save_model = False
-log_to_file = False
-save_model_every_epoch = False
+# for velocity normalization
+bbox_reg_mean = torch.tensor([0.0, 0.0, 0.0, 0.0])
+bbox_reg_std = torch.tensor([0.1, 0.1, 0.2, 0.2])
+
+write_tensorboard_log = True
+save_model = True
+log_to_file = True
+save_model_every_epoch = True
 
 datasets = {x: TrackDataset(root_dir='data', mode=x, batch_size=batch_size,
     seq_length=seq_len) for x in ["train", "val"]}
@@ -64,11 +70,11 @@ tracknet = TrackNet()
 tracknet = tracknet.to(device)
 tracknet.device = device
 
-criterion = nn.SmoothL1Loss(reduction="sum")
+#criterion = nn.SmoothL1Loss(reduction="mean")
 optimizer = optim.Adam(tracknet.parameters(), lr=learning_rate, weight_decay=weight_decay)
-#scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1,
-#    gamma=scheduler_factor)
-scheduler = None
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1,
+    gamma=scheduler_factor)
+#scheduler = None
 
 # create output directory
 date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -163,6 +169,12 @@ for epoch in range(num_epochs):
             # pick out velocity for lasst timestep in sequence
             velocities = velocities[:, -1, :, :]
 
+            # normalize velocities
+            #print("before", velocities)
+            velocities = ((velocities - bbox_reg_mean.expand_as(velocities))
+                / bbox_reg_std.expand_as(velocities))
+            #print("after", velocities)
+
             #print(boxes_prev)
 
             mvs_residuals = mvs_residuals.to(device)
@@ -173,8 +185,26 @@ for epoch in range(num_epochs):
             optimizer.zero_grad()
 
             with torch.set_grad_enabled(phase == 'train'):
+                #print("boxes_prev_ shape", boxes_prev_.shape)
+                #print("mvs_residuals shape", mvs_residuals.shape)
                 velocities_pred = tracknet(mvs_residuals, boxes_prev_)
-                loss = criterion(velocities_pred, velocities)
+                #print("velocities_pred shape", velocities_pred.shape)
+                #print("num_boxes_mask", num_boxes_mask)
+
+                # velocities_pred: [batch_size, -1, 4]
+                inside_weight = velocities_pred.new(batch_size, velocities.size(1), 4).zero_()
+                outside_weight = velocities_pred.new(batch_size, velocities.size(1), 4).zero_()
+                for bs_idx in range(batch_size):
+                    num_boxes = num_boxes_mask[bs_idx, -1].nonzero().shape[0]
+                    if num_boxes > 0:
+                        inside_weight[bs_idx, 0:num_boxes, :] = 1.0
+                        outside_weight[bs_idx, 0:num_boxes, :] = 1.0 / num_boxes
+
+                loss = smooth_l1_loss(velocities_pred, velocities, inside_weight, outside_weight, dim=[2, 1])
+                loss = loss.mean()
+
+                #loss = criterion(velocities_pred, velocities)
+                #print("loss", loss.item())
 
                 if phase == "train":
                     if write_tensorboard_log:
@@ -202,38 +232,28 @@ for epoch in range(num_epochs):
                 velocities_pred_tmp = velocities_pred[batch_idx, num_boxes_mask[batch_idx, -1, :], :]
                 velocities_tmp = velocities[batch_idx, num_boxes_mask[batch_idx, -1, :], :]
                 boxes_prev_tmp = boxes_prev[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :]
+                boxes_prev_tmp = convert_to_tlbr(boxes_prev_tmp)
+                boxes_prev_tmp = boxes_prev_tmp.unsqueeze(0)
                 boxes_tmp = boxes[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :]
-                boxes_pred = box_from_velocities(boxes_prev_tmp, velocities_pred_tmp)
-                #if phase == "val":
-                #    print("### batch_idx: {}".format(batch_idx))
-                #    print("velocities", velocities_tmp[:8, :])
-                #    print("velocities_pred", velocities_pred_tmp[:8, :])
-                #    print("boxes_prev", boxes_prev_tmp[:8, :])
-                #    print("boxes", boxes_tmp[:8, :])
-                #    print("boxes_pred", boxes_pred[:8, :])
+                velocities_pred_tmp = velocities_pred_tmp.view(-1, 4) * bbox_reg_std + bbox_reg_mean
+                velocities_pred_tmp = velocities_pred_tmp.view(1, -1, 4)
+                boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev_tmp, deltas=velocities_pred_tmp, sigma=sigma, add_one=False)#.squeeze().numpy()
+                boxes_prev_tmp = boxes_prev_tmp[0, ...]
+                boxes_pred = boxes_pred[0, ...]
+                velocities_pred_tmp = velocities_pred_tmp[0, ...]
+                boxes_pred = convert_to_tlwh(boxes_pred)
+                if phase == "val":
+                    print("### batch_idx: {}".format(batch_idx))
+                    print("velocities", velocities_tmp[:8, :])
+                    print("velocities_pred", velocities_pred_tmp[:8, :])
+                    print("boxes_prev", boxes_prev_tmp[:8, :])
+                    print("boxes", boxes_tmp[:8, :])
+                    print("boxes_pred", boxes_pred[:8, :])
                 mean_iou = mean_iou + compute_mean_iou(boxes_pred, boxes_tmp)
             mean_iou = mean_iou / batch_size
             running_mean_iou.append(mean_iou)
-            # mean_iou = 0
-            # for batch_idx in range(batch_size):
-            #     velocities_pred_tmp = velocities_pred[batch_idx, num_boxes_mask[batch_idx, -1, :], :]
-            #     velocities_tmp = velocities[batch_idx, num_boxes_mask[batch_idx, -1, :], :]
-            #     boxes_prev_tmp = boxes_prev[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :].unsqueeze(0)
-            #     boxes_tmp = boxes[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :].unsqueeze(0)
-            #     #boxes_pred = box_from_velocities(boxes_prev_tmp, velocities_pred_tmp)
-            #     boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev_tmp, deltas=velocities_pred_tmp, sigma=sigma, add_one=False)#.squeeze().numpy()
-            #     if phase == "val":
-            #         print("### batch_idx: {}".format(batch_idx))
-            #         print("velocities", velocities_tmp[:8, :])
-            #         print("velocities_pred", velocities_pred_tmp[:8, :])
-            #         print("boxes_prev", boxes_prev_tmp[:8, :])
-            #         print("boxes", boxes_tmp[:8, :])
-            #         print("boxes_pred", boxes_pred[:8, :])
-            #     mean_iou = mean_iou + compute_mean_iou(boxes_pred, boxes_tmp)
-            # mean_iou = mean_iou / batch_size
-            # running_mean_iou.append(mean_iou)
 
-            print(phase, "epoch", epoch, "step", step, "weight_checksum = ", weight_checksum(tracknet), "loss = ", loss.item(), "mean_iou = ", mean_iou)
+            print(phase, "epoch", epoch, "step", step, "weight sum = ", weight_checksum(tracknet), "loss = ", loss.item(), "mean_iou = ", mean_iou, "lr = ", learning_rate)
             if write_tensorboard_log:
                 writer.add_scalar('Loss/{}'.format(phase), loss.item(), iterations[phase])
                 writer.add_scalar('Mean IoU/{}'.format(phase), mean_iou, iterations[phase])

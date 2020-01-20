@@ -1,0 +1,1 @@
+To revert the changes to the training script and use my own bbox conversion functions and my own velocity representation, checkout commit d7e61ca8649adefb87a9b5f91186697c90562809 on GitHub
