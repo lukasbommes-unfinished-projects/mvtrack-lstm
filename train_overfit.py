@@ -13,6 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 from coviar import load
 
 from lib.model.tracknet_overfit import TrackNet
+from lib.model.tracknet_overfit_3dcnn import TrackNet
 from lib.loss import smooth_l1_loss
 from lib.utils import count_params, weight_checksum, compute_mean_iou
 from lib.dataset.dataset import TrackDataset
@@ -35,12 +36,12 @@ torch.set_printoptions(precision=10)
 # 3) Try if adding a second LSTM layer helps
 # 4) Try if unlocking weights of some of the top layers (e.g. conv1x1) for training helps
 
-num_epochs = 40
+num_epochs = 100
 batch_size = 8
 seq_len = 3
 learning_rate = 0.001  # pink: 0.1, türkis: 0.01, , # orange: 0.001, blue-green: 0.01
 weight_decay = 0.0001
-scheduler_steps = [5]#[8, 16, 24]
+scheduler_steps = [25]#[8, 16, 24]
 scheduler_factor = 0.1
 sigma = 1.5
 gpu = 0
@@ -60,7 +61,7 @@ tracknet = TrackNet()
 tracknet = tracknet.to(device)
 tracknet.device = device
 
-criterion = nn.SmoothL1Loss(reduction="mean")
+#criterion = nn.SmoothL1Loss(reduction="mean")
 #optimizer = optim.Adam(tracknet.parameters(), lr=learning_rate, weight_decay=weight_decay)
 optimizer = optim.RMSprop(tracknet.parameters(), lr=learning_rate, weight_decay=weight_decay)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1,
@@ -129,7 +130,7 @@ for epoch in range(num_epochs):
         running_loss = []
         running_mean_iou = []
 
-        for step in range(3):
+        for step in range(30):
 
             sample = pickle.load(open("sample_{}_{:06d}.pkl".format(phase, step), "rb"))
 
@@ -188,18 +189,18 @@ for epoch in range(num_epochs):
                 #    print("velocities", velocities[0, num_boxes_mask[0, -1, :], :])
                 #    print("velocities_pred", velocities_pred[0, num_boxes_mask[0, -1, :], :])
 
-                # inside_weight = velocities_pred.new(batch_size, velocities.size(1), 4).zero_()
-                # outside_weight = velocities_pred.new(batch_size, velocities.size(1), 4).zero_()
-                # for bs_idx in range(batch_size):
-                #     num_boxes = num_boxes_mask[bs_idx, -1].nonzero().shape[0]
-                #     if num_boxes > 0:
-                #         inside_weight[bs_idx, 0:num_boxes, :] = 1.0
-                #         outside_weight[bs_idx, 0:num_boxes, :] = 1.0 / num_boxes
-                #
-                # loss = smooth_l1_loss(velocities_pred, velocities, inside_weight, outside_weight, dim=[2, 1])
-                # loss = loss.mean()
+                inside_weight = velocities_pred.new(batch_size, velocities.size(1), 4).zero_()
+                outside_weight = velocities_pred.new(batch_size, velocities.size(1), 4).zero_()
+                for bs_idx in range(batch_size):
+                    num_boxes = num_boxes_mask[bs_idx, -1].nonzero().shape[0]
+                    if num_boxes > 0:
+                        inside_weight[bs_idx, 0:num_boxes, :] = 1.0
+                        outside_weight[bs_idx, 0:num_boxes, :] = 1.0 / num_boxes
 
-                loss = criterion(velocities_pred, velocities)
+                loss = smooth_l1_loss(velocities_pred, velocities, inside_weight, outside_weight, dim=[2, 1])
+                loss = loss.mean()
+
+                #loss = criterion(velocities_pred, velocities)
 
                 if phase == "train":
                     if write_tensorboard_log:
@@ -228,7 +229,7 @@ for epoch in range(num_epochs):
                 velocities_tmp = velocities[batch_idx, num_boxes_mask[batch_idx, -1, :], :]
                 boxes_prev_tmp = boxes_prev[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :]
                 boxes_tmp = boxes[batch_idx, -1, num_boxes_mask[batch_idx, -1, :], :]
-                # if phase == "val":
+                # if phase == "train":
                 #     print("### batch_idx: {}".format(batch_idx))
                 #     print("velocities", velocities_tmp[:8, :])
                 #     print("velocities_pred", velocities_pred_tmp[:8, :])
@@ -243,8 +244,8 @@ for epoch in range(num_epochs):
                 boxes_pred = boxes_pred[0, ...]
                 velocities_pred_tmp = velocities_pred_tmp[0, ...]
                 boxes_pred = convert_to_tlwh(boxes_pred)
-                #if phase == "val":
-                #   print("boxes_pred", boxes_pred[:8, :])
+                # if phase == "train":
+                #    print("boxes_pred", boxes_pred[:8, :])
                 mean_iou = mean_iou + compute_mean_iou(boxes_pred, boxes_tmp)
             mean_iou = mean_iou / batch_size
             running_mean_iou.append(mean_iou)

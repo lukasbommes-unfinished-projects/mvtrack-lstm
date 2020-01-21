@@ -4,7 +4,7 @@ import torch.utils.model_zoo as model_zoo
 import torchvision
 
 from lib.model.resnet_atrous import resnet18
-from lib.model.convrnn import Conv2dLSTM
+from lib.model.convrnn import Conv2dGRU
 from lib.utils import load_pretrained_weights_to_modified_resnet, \
     load_pretrained_weights, count_params, weight_checksum
 
@@ -13,7 +13,7 @@ class BaseNet(nn.Module):
     def __init__(self, pooling_size):
         super(BaseNet, self).__init__()
 
-        self.FIXED_BLOCKS = 1
+        self.FIXED_BLOCKS = 0
 
         # load pretrained weights
         resnet = resnet18()
@@ -78,7 +78,7 @@ class TrackNet(nn.Module):
         for p in self.base.parameters(): p.requires_grad = False
 
         num_in_channels = 4*pooling_size*pooling_size
-        self.lstm = Conv2dLSTM(in_channels=num_in_channels,
+        self.lstm = Conv2dGRU(in_channels=num_in_channels,
                                out_channels=num_in_channels,
                                kernel_size=3,
                                num_layers=1,
@@ -109,67 +109,18 @@ class TrackNet(nn.Module):
         batch_size, seq_len, C, H, W = mvs_residuals.shape
         num_boxes = boxes_prev.shape[-2]
 
-        if self.DEBUG:
-            print(mvs_residuals.shape)
-            print(boxes_prev.shape)
+        mvs_residuals = mvs_residuals.view(batch_size * seq_len, C, H, W)
+        out = self.base(mvs_residuals)
 
-        # apply CNN feature extractor to each element of the sequence
-        out_tmp = torch.tensor([]).to(self.device)
-        for i in range(seq_len):
-            out_t = self.base(mvs_residuals[:, i, :, :, :])  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
-            out_t  = out_t.unsqueeze(1)
-            out_tmp = torch.cat((out_tmp, out_t ), 1)
-        out = out_tmp
-        if self.DEBUG:
-            print(out.device)
+        out = out.view(batch_size, seq_len, *out.shape[1:])
+        out, _ = self.lstm(out)
+        out = out.contiguous().view(batch_size * seq_len, *out.shape[2:])
 
-        # input shape: [batch_size, seq_len, C, H, W]
-        # out: list of tensors with shape [batch_size, seq_len, C, H, W], each tensor belongs to one time step
-        out, _  = self.lstm(out)
-        if self.DEBUG:
-            print(out.device)
-
-        # apply conv1x1 element-wise
-        # out_tmp = torch.tensor([]).to(self.device)
-        # for i in range(seq_len):
-        #     out_t = self.conv1x1(out[:, i, :, :, :])  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
-        #     out_t  = out_t.unsqueeze(1)
-        #     out_tmp = torch.cat((out_tmp, out_t ), 1)
-        # out = out_tmp
-        # if self.DEBUG:
-        #     print(out.device)
-
-        # apply PS ROI pooling to crop features inside bounding boxes
-        out_tmp = torch.tensor([]).to(self.device)
-        for i in range(seq_len):
-            out_t = self.ps_roi_pool(out[:, i, :, :, :], boxes_prev[:, i, :, :].contiguous().view(-1, 5))  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
-            #print("out", out_t.shape)
-            out_t  = out_t.unsqueeze(1)
-            out_tmp = torch.cat((out_tmp, out_t ), 1)
-        out = out_tmp
-        if self.DEBUG:
-            print(out.device)
-
-        out_tmp = torch.tensor([]).to(self.device)
-        for i in range(seq_len):
-            out_t = self.pooling(out[:, i, :, :, :])  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
-            out_t  = out_t.unsqueeze(1)
-            out_tmp = torch.cat((out_tmp, out_t ), 1)
-        out = out_tmp
-        if self.DEBUG:
-            print(out.device)
-
+        boxes_prev = boxes_prev.view(batch_size * seq_len * num_boxes, 5)
+        out = self.ps_roi_pool(out, boxes_prev)
+        out = self.pooling(out)
         out = out.squeeze()
-        if self.DEBUG:
-            print(out.device)
-
         out = out.view(batch_size, seq_len, num_boxes, 4)
-        if self.DEBUG:
-            print(out.device)
-
-        # pick out the last velocity for current time step
         out = out[:, -1, :, :]
-        if self.DEBUG:
-            print(out.device)
 
-        return out  # shape [batch_size, 1, num_boxes, 4] with row format [vxc, vyc, vw, vh]
+        return out  # shape [batch_size, num_boxes, 4] with row format [vxc, vyc, vw, vh]

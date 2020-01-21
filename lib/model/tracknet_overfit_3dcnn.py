@@ -4,7 +4,6 @@ import torch.utils.model_zoo as model_zoo
 import torchvision
 
 from lib.model.resnet_atrous import resnet18
-from lib.model.convrnn import Conv2dLSTM, Conv2dGRU
 from lib.utils import load_pretrained_weights_to_modified_resnet, \
     load_pretrained_weights, count_params, weight_checksum
 
@@ -55,7 +54,7 @@ class BaseNet(nn.Module):
         # boxes_prev are of shape [B, K, 5] with batch size B and number of boxes K
         # row format is [frame_idx, xmin, ymin, width, height]
         x = self.RCNN_base(mvs_residuals)
-        #x = self.RCNN_bbox_base(x)
+        x = self.RCNN_bbox_base(x)
         return x
 
 
@@ -75,23 +74,13 @@ class TrackNet(nn.Module):
         self.base.load_state_dict(state_dict["model"])
         print("Loaded weights from {} into BaseNet.".format(weights_file))
         # fix base net weights
-        #for p in self.base.parameters(): p.requires_grad = False
+        for p in self.base.parameters(): p.requires_grad = False
 
         num_in_channels = 4*pooling_size*pooling_size
-        self.lstm = Conv2dGRU(in_channels=512,
-                               out_channels=num_in_channels,
-                               kernel_size=3,
-                               num_layers=3,
-                               bias=True,
-                               batch_first=True,
-                               dropout=0,
-                               bidirectional=False,
-                               stride=1,
-                               dilation=1,
-                               groups=1)
+        self.conv3d = nn.Conv3d(196, 196, kernel_size=3, stride=1, padding=1, bias=True)
 
         self.pooling = nn.AvgPool2d(kernel_size=self.pooling_size, stride=self.pooling_size)
-        self.conv1x1 = nn.Conv2d(196, num_in_channels, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
+        #self.conv1x1 = nn.Conv2d(196, 4*self.pooling_size*self.pooling_size, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
         self.ps_roi_pool = torchvision.ops.PSRoIPool(output_size=(self.pooling_size, self.pooling_size), spatial_scale=self.base_scale)
 
         if self.DEBUG:
@@ -109,67 +98,29 @@ class TrackNet(nn.Module):
         batch_size, seq_len, C, H, W = mvs_residuals.shape
         num_boxes = boxes_prev.shape[-2]
 
-        if self.DEBUG:
-            print(mvs_residuals.shape)
-            print(boxes_prev.shape)
+        mvs_residuals = mvs_residuals.view(batch_size * seq_len, C, H, W)
+        out = self.base(mvs_residuals)
 
-        # apply CNN feature extractor to each element of the sequence
-        out_tmp = torch.tensor([]).to(self.device)
-        for i in range(seq_len):
-            out_t = self.base(mvs_residuals[:, i, :, :, :])  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
-            out_t  = out_t.unsqueeze(1)
-            out_tmp = torch.cat((out_tmp, out_t ), 1)
-        out = out_tmp
-        if self.DEBUG:
-            print(out.device)
+        out = out.view(batch_size, seq_len, *out.shape[1:])
+        #print("out", out.shape)
 
-        # input shape: [batch_size, seq_len, C, H, W]
-        # out: list of tensors with shape [batch_size, seq_len, C, H, W], each tensor belongs to one time step
-        out, _  = self.lstm(out)
-        if self.DEBUG:
-            print(out.device)
+        out = out.permute(0, 2, 1, 3, 4)  # [batch_size, seq_len, C, H, W] -> [batch_size, C, seq_len, H, W]
+        out = self.conv3d(out)
+        #print(out.shape)
+        out = out.permute(0, 2, 1, 3, 4)  # [batch_size, C, seq_len, H, W] -> [batch_size, seq_len, C, H, W]
+        #print(out.shape)
+        out = out.contiguous().view(batch_size * seq_len, *out.shape[2:])
 
-        # apply conv1x1 element-wise
-        out_tmp = torch.tensor([]).to(self.device)
-        for i in range(seq_len):
-            out_t = self.conv1x1(out[:, i, :, :, :])  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
-            out_t  = out_t.unsqueeze(1)
-            out_tmp = torch.cat((out_tmp, out_t ), 1)
-        out = out_tmp
-        if self.DEBUG:
-            print(out.device)
+        boxes_prev = boxes_prev.view(batch_size * seq_len * num_boxes, 5)
+        out = self.ps_roi_pool(out, boxes_prev)  # -> [batch_size * seq_len * num_boxes, 4, 7, 7]
+        #print(out.shape)
+        out = self.pooling(out)  # -> [batch_size * seq_len * num_boxes, 4, 1, 1]
+        #print(out.shape)
+        out = out.squeeze() # -> [batch_size * seq_len * num_boxes, 4]
+        #print(out.shape)
+        out = out.view(batch_size, seq_len, num_boxes, 4)  # -> [batch_size, seq_len, num_boxes, 4]
+        #print(out.shape)
+        out = out.mean(1)  # average over time direction -> [batch_size, num_boxes, 4]
+        #print(out.shape)
 
-        # apply PS ROI pooling to crop features inside bounding boxes
-        out_tmp = torch.tensor([]).to(self.device)
-        for i in range(seq_len):
-            out_t = self.ps_roi_pool(out[:, i, :, :, :], boxes_prev[:, i, :, :].contiguous().view(-1, 5))  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
-            #print("out", out_t.shape)
-            out_t  = out_t.unsqueeze(1)
-            out_tmp = torch.cat((out_tmp, out_t ), 1)
-        out = out_tmp
-        if self.DEBUG:
-            print(out.device)
-
-        out_tmp = torch.tensor([]).to(self.device)
-        for i in range(seq_len):
-            out_t = self.pooling(out[:, i, :, :, :])  # extract base features of shape [seq_len*batch_size, 196, ceil(H/16), ceil(W/16)]
-            out_t  = out_t.unsqueeze(1)
-            out_tmp = torch.cat((out_tmp, out_t ), 1)
-        out = out_tmp
-        if self.DEBUG:
-            print(out.device)
-
-        out = out.squeeze()
-        if self.DEBUG:
-            print(out.device)
-
-        out = out.view(batch_size, seq_len, num_boxes, 4)
-        if self.DEBUG:
-            print(out.device)
-
-        # pick out the last velocity for current time step
-        out = out[:, -1, :, :]
-        if self.DEBUG:
-            print(out.device)
-
-        return out  # shape [batch_size, 1, num_boxes, 4] with row format [vxc, vyc, vw, vh]
+        return out  # shape [batch_size, num_boxes, 4] with row format [vxc, vyc, vw, vh]

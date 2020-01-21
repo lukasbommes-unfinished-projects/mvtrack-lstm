@@ -34,32 +34,31 @@ torch.set_printoptions(precision=10)
 # 2) Try if propagating the hidden and cell states between batches is helpful
 # 3) Try if adding a second LSTM layer helps
 # 4) Try if unlocking weights of some of the top layers (e.g. conv1x1) for training helps
+# 5) Increase frame resolution to original size
 
-num_epochs = 600
-batch_size = 1
+# orange: OTCD loss, : PyTorch L1 loss
+
+num_epochs = 200
+batch_size = 8
 seq_len = 3
-learning_rate = 0.001  # pink: 0.1, türkis: 0.01, , # orange: 0.001, blue-green: 0.01
+learning_rate = 0.001
 weight_decay = 0.0001
-scheduler_steps = [8, 16, 24]
+scheduler_steps = [15]
 scheduler_factor = 0.1
 sigma = 1.5
-gpu = 0
+gpu = 1
 
 # for velocity normalization
 bbox_reg_mean = torch.tensor([0.0, 0.0, 0.0, 0.0])
 bbox_reg_std = torch.tensor([0.1, 0.1, 0.2, 0.2])
 
-write_tensorboard_log = False
-save_model = False
-log_to_file = False
-save_model_every_epoch = False
+write_tensorboard_log = True
+save_model = True
+log_to_file = True
+save_model_every_epoch = True
 
 datasets = {x: TrackDataset(root_dir='data', mode=x, batch_size=batch_size,
     seq_length=seq_len) for x in ["train", "val"]}
-
-# print("Dataset stats:")
-# for mode, dataset in datasets.items():
-#     print("{} dataset has {} samples".format(mode, len(dataset)))
 
 dataloaders = {x: torch.utils.data.DataLoader(datasets[x], batch_size=batch_size,
     shuffle=False, num_workers=4) for x in ["train", "val"]}
@@ -71,7 +70,8 @@ tracknet = tracknet.to(device)
 tracknet.device = device
 
 criterion = nn.SmoothL1Loss(reduction="mean")
-optimizer = optim.Adam(tracknet.parameters(), lr=learning_rate, weight_decay=weight_decay)
+#optimizer = optim.Adam(tracknet.parameters(), lr=learning_rate, weight_decay=weight_decay)
+optimizer = optim.RMSprop(tracknet.parameters(), lr=learning_rate, weight_decay=weight_decay)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1,
     gamma=scheduler_factor)
 #scheduler = None
@@ -191,7 +191,6 @@ for epoch in range(num_epochs):
                 #print("velocities_pred shape", velocities_pred.shape)
                 #print("num_boxes_mask", num_boxes_mask)
 
-                # velocities_pred: [batch_size, -1, 4]
                 # inside_weight = velocities_pred.new(batch_size, velocities.size(1), 4).zero_()
                 # outside_weight = velocities_pred.new(batch_size, velocities.size(1), 4).zero_()
                 # for bs_idx in range(batch_size):
