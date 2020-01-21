@@ -12,3 +12,5 @@ __pycache__/
 /data/MOT17/
 /data/MOT15/
 /data/MOT16/
+
+/*.pkl

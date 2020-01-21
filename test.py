@@ -44,7 +44,7 @@ if __name__ == "__main__":
         det_conf_threshold=det_conf_threshold,
         state_thresholds=state_thresholds,
         seq_len=seq_len,
-        weights_file="models/tracker/2020-01-20_02-12-06/model_epoch_1.pth",
+        weights_file="models/tracker/2020-01-20_03-30-17/model_epoch_7.pth",
         device=torch.device("cuda:0"),
         use_numeric_ids=True,
         measure_timing=True)

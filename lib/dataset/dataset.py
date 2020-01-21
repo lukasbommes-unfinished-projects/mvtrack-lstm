@@ -61,10 +61,10 @@ class TrackDataset(torch.utils.data.Dataset):
             print("Built dataset index.")
 
         # for DEBUGGING ONLY: Make a very short index with a few samples
-        # self.index = self.index[:4]
-        # for step, item in enumerate(self.index):
-        #     print("step {}:".format(step), item)
-        #print(self.index)
+        self.index = self.index[:24]
+        for step, item in enumerate(self.index):
+            print("step {}:".format(step), item)
+        print(self.index)
 
     def get_sequence_lengths_(self):
         """Determine number of frames in each video sequence."""
@@ -279,7 +279,7 @@ class TrackDataset(torch.utils.data.Dataset):
 # run as python -m lib.dataset.dataset from root dir
 if __name__ == "__main__":
 
-    batch_size = 1
+    batch_size = 8
     seq_len = 3
 
     datasets = {x: TrackDataset(root_dir='data', mode=x, batch_size=batch_size,
@@ -293,6 +293,12 @@ if __name__ == "__main__":
         shuffle=False, num_workers=8) for x in ["train", "val"]}
 
     step_wise = True
+
+    # save for overfit testing
+    for step, sample in enumerate(dataloaders["train"]):
+        pickle.dump(sample, open("sample_train_{:06d}.pkl".format(step), "wb"))
+    for step, sample in enumerate(dataloaders["val"]):
+        pickle.dump(sample, open("sample_val_{:06d}.pkl".format(step), "wb"))
 
     for batch_idx in range(batch_size):
         for seq_idx in range(seq_len):

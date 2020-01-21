@@ -223,7 +223,7 @@ class TrackerMVLSTM:
         boxes_prev = boxes_seq_proc[:, -1, 0:max_num_boxes-boxes_to_pad[-1], 1:]
         #print("boxes_prev shape", boxes_prev.shape)
         #print("velocities_pred shape", velocities_pred.shape)
-        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev.cpu(), deltas=velocities_pred, sigma=self.sigma, add_one=False).squeeze().numpy()
+        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev.cpu(), deltas=velocities_pred, sigma=self.sigma, add_one=True).squeeze().numpy()
         # change box format to [xmin, ymin, w, h]
         boxes_pred[..., -2] = boxes_pred[..., -2] - boxes_pred[..., -4]
         boxes_pred[..., -1] = boxes_pred[..., -1] - boxes_pred[..., -3]

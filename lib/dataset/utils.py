@@ -14,14 +14,14 @@ def compute_scaling_factor(mvs_residuals, max_scale=1000):
 def convert_to_tlbr(boxes):
     """[xmin, ymin, width, height] -> [x1, y1, x2, y2]"""
     boxes_ = boxes.clone()
-    boxes_[..., -2] = boxes_[..., -2] + boxes_[..., -4]
-    boxes_[..., -1] = boxes_[..., -1] + boxes_[..., -3]
+    boxes_[..., -2] = boxes_[..., -2] + boxes_[..., -4] - 1
+    boxes_[..., -1] = boxes_[..., -1] + boxes_[..., -3] - 1
     return boxes_
 
 
 def convert_to_tlwh(boxes):
     """[x1, y1, x2, y2] -> [xmin, ymin, width, height]"""
     boxes_ = boxes.clone()
-    boxes_[..., -2] = boxes_[..., -2] - boxes_[..., -4]
-    boxes_[..., -1] = boxes_[..., -1] - boxes_[..., -3]
+    boxes_[..., -2] = boxes_[..., -2] - boxes_[..., -4] + 1
+    boxes_[..., -1] = boxes_[..., -1] - boxes_[..., -3] + 1
     return boxes_
