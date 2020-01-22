@@ -121,6 +121,7 @@ class TrackNet(nn.Module):
         out = self.pooling(out)
         out = out.squeeze()
         out = out.view(batch_size, seq_len, num_boxes, 4)
-        out = out[:, -1, :, :]
+        #out = out[:, -1, :, :]
+        out = out.mean(1)
 
         return out  # shape [batch_size, num_boxes, 4] with row format [vxc, vyc, vw, vh]

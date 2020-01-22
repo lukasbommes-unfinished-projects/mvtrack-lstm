@@ -78,6 +78,7 @@ class TrackNet(nn.Module):
 
         num_in_channels = 4*pooling_size*pooling_size
         self.conv3d = nn.Conv3d(196, 196, kernel_size=3, stride=1, padding=1, bias=True)
+        self.BatchNorm
 
         self.pooling = nn.AvgPool2d(kernel_size=self.pooling_size, stride=self.pooling_size)
         #self.conv1x1 = nn.Conv2d(196, 4*self.pooling_size*self.pooling_size, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)

@@ -4,7 +4,6 @@ import torch.utils.model_zoo as model_zoo
 import torchvision
 
 from lib.model.resnet_atrous import resnet18
-from lib.model.convrnn import Conv2dGRU
 from lib.utils import load_pretrained_weights_to_modified_resnet, \
     load_pretrained_weights, count_params, weight_checksum
 
@@ -78,17 +77,7 @@ class TrackNet(nn.Module):
         for p in self.base.parameters(): p.requires_grad = False
 
         num_in_channels = 4*pooling_size*pooling_size
-        self.lstm = Conv2dGRU(in_channels=num_in_channels,
-                               out_channels=num_in_channels,
-                               kernel_size=3,
-                               num_layers=1,
-                               bias=True,
-                               batch_first=True,
-                               dropout=0,
-                               bidirectional=False,
-                               stride=1,
-                               dilation=1,
-                               groups=1)
+        self.conv3d = nn.Conv3d(196, 196, kernel_size=3, stride=1, padding=1, bias=True)
 
         self.pooling = nn.AvgPool2d(kernel_size=self.pooling_size, stride=self.pooling_size)
         #self.conv1x1 = nn.Conv2d(196, 4*self.pooling_size*self.pooling_size, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
@@ -113,15 +102,25 @@ class TrackNet(nn.Module):
         out = self.base(mvs_residuals)
 
         out = out.view(batch_size, seq_len, *out.shape[1:])
-        out, _ = self.lstm(out)
+        #print("out", out.shape)
+
+        out = out.permute(0, 2, 1, 3, 4)  # [batch_size, seq_len, C, H, W] -> [batch_size, C, seq_len, H, W]
+        out = self.conv3d(out)
+        #print(out.shape)
+        out = out.permute(0, 2, 1, 3, 4)  # [batch_size, C, seq_len, H, W] -> [batch_size, seq_len, C, H, W]
+        #print(out.shape)
         out = out.contiguous().view(batch_size * seq_len, *out.shape[2:])
 
         boxes_prev = boxes_prev.view(batch_size * seq_len * num_boxes, 5)
-        out = self.ps_roi_pool(out, boxes_prev)
-        out = self.pooling(out)
-        out = out.squeeze()
-        out = out.view(batch_size, seq_len, num_boxes, 4)
-        #out = out[:, -1, :, :]
-        out = out.mean(1)
+        out = self.ps_roi_pool(out, boxes_prev)  # -> [batch_size * seq_len * num_boxes, 4, 7, 7]
+        #print(out.shape)
+        out = self.pooling(out)  # -> [batch_size * seq_len * num_boxes, 4, 1, 1]
+        #print(out.shape)
+        out = out.squeeze() # -> [batch_size * seq_len * num_boxes, 4]
+        #print(out.shape)
+        out = out.view(batch_size, seq_len, num_boxes, 4)  # -> [batch_size, seq_len, num_boxes, 4]
+        #print(out.shape)
+        out = out.mean(1)  # average over time direction -> [batch_size, num_boxes, 4]
+        #print(out.shape)
 
         return out  # shape [batch_size, num_boxes, 4] with row format [vxc, vyc, vw, vh]

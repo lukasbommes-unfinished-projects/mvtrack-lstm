@@ -13,7 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 from coviar import load
 
 from lib.model.tracknet_overfit import TrackNet
-from lib.model.tracknet_overfit_3dcnn import TrackNet
+#from lib.model.tracknet_overfit_3dcnn import TrackNet
 from lib.loss import smooth_l1_loss
 from lib.utils import count_params, weight_checksum, compute_mean_iou
 from lib.dataset.dataset import TrackDataset
@@ -36,12 +36,12 @@ torch.set_printoptions(precision=10)
 # 3) Try if adding a second LSTM layer helps
 # 4) Try if unlocking weights of some of the top layers (e.g. conv1x1) for training helps
 
-num_epochs = 100
+num_epochs = 30
 batch_size = 8
 seq_len = 3
 learning_rate = 0.001  # pink: 0.1, türkis: 0.01, , # orange: 0.001, blue-green: 0.01
 weight_decay = 0.0001
-scheduler_steps = [25]#[8, 16, 24]
+scheduler_steps = [5]#[8, 16, 24]
 scheduler_factor = 0.1
 sigma = 1.5
 gpu = 0

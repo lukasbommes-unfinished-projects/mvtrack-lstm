@@ -8,6 +8,7 @@ from collections import deque
 from lib.model.tracknet import TrackNet
 from lib.tracking.utils import match_bounding_boxes
 from lib.dataset.velocities import bbox_transform_inv_otcd
+from lib.dataset.utils import convert_to_tlbr, convert_to_tlwh
 from lib.utils import load_pretrained_weights
 
 
@@ -179,8 +180,7 @@ class TrackerMVLSTM:
         boxes_seq_proc = torch.from_numpy(boxes_seq_proc).type(torch.float).unsqueeze(0)  # add batch dimension
 
         # change box format to [frame_idx, x1, x2, y1, y2]
-        boxes_seq_proc[..., -2] = boxes_seq_proc[..., -2] + boxes_seq_proc[..., -4]
-        boxes_seq_proc[..., -1] = boxes_seq_proc[..., -1] + boxes_seq_proc[..., -3]
+        boxes_seq_proc = convert_to_tlbr(boxes_seq_proc)
 
         # preprocess stored mvs_residuals
         mvs_residuals_seq = copy.copy(self.mvs_residuals_seq)
@@ -223,10 +223,10 @@ class TrackerMVLSTM:
         boxes_prev = boxes_seq_proc[:, -1, 0:max_num_boxes-boxes_to_pad[-1], 1:]
         #print("boxes_prev shape", boxes_prev.shape)
         #print("velocities_pred shape", velocities_pred.shape)
-        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev.cpu(), deltas=velocities_pred, sigma=self.sigma, add_one=True).squeeze().numpy()
+        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev.cpu(), deltas=velocities_pred, sigma=self.sigma, add_one=False)
         # change box format to [xmin, ymin, w, h]
-        boxes_pred[..., -2] = boxes_pred[..., -2] - boxes_pred[..., -4]
-        boxes_pred[..., -1] = boxes_pred[..., -1] - boxes_pred[..., -3]
+        boxes_pred = convert_to_tlwh(boxes_pred)
+        boxes_pred = boxes_pred.squeeze().numpy()
         self.boxes = boxes_pred
 
         #print("boxes after predict: ", self.boxes)

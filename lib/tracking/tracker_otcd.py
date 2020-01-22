@@ -6,6 +6,7 @@ import cv2
 from lib.model.tracknet_otcd import TrackNetOTCD
 from lib.tracking.utils import match_bounding_boxes
 from lib.dataset.velocities import bbox_transform_inv_otcd
+from lib.dataset.utils import convert_to_tlbr, convert_to_tlwh
 
 
 class TrackerOTCD:
@@ -149,8 +150,7 @@ class TrackerOTCD:
         boxes_prev_ = boxes_prev_.unsqueeze(0)  # add batch dimension
 
         # change box format to [frame_idx, x1, x2, y1, y2]
-        boxes_prev_[..., -2] = boxes_prev_[..., -2] + boxes_prev_[..., -4]
-        boxes_prev_[..., -1] = boxes_prev_[..., -1] + boxes_prev_[..., -3]
+        boxes_prev_ = convert_to_tlbr(boxes_prev_)
 
         boxes_prev_ = boxes_prev_.to(self.device)
         mvs_residuals = self.last_mvs_residuals
@@ -176,10 +176,10 @@ class TrackerOTCD:
         velocities_pred = velocities_pred.view(-1, 4) * self.bbox_reg_std + self.bbox_reg_mean
         velocities_pred = velocities_pred.view(1, -1, 4)
 
-        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev_[..., 1:].cpu(), deltas=velocities_pred, sigma=1.5).squeeze().numpy()
+        boxes_pred = bbox_transform_inv_otcd(boxes=boxes_prev_[..., 1:].cpu(), deltas=velocities_pred, sigma=1.5)
         # change box format to [xmin, ymin, w, h]
-        boxes_pred[..., -2] = boxes_pred[..., -2] - boxes_pred[..., -4]
-        boxes_pred[..., -1] = boxes_pred[..., -1] - boxes_pred[..., -3]
+        boxes_pred = convert_to_tlwh(boxes_pred)
+        boxes_pred = boxes_pred.squeeze().numpy()
         self.boxes = boxes_pred
 
         if self.measure_timing:
