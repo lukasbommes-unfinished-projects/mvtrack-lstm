@@ -77,27 +77,25 @@ class TrackNet(nn.Module):
         # fix base net weights
         for p in self.base.parameters(): p.requires_grad = False
 
-        num_in_channels = 4*pooling_size*pooling_size
-        self.lstm = Conv2dGRU(in_channels=num_in_channels,
-                               out_channels=num_in_channels,
+        self.num_in_channels = 4*pooling_size*pooling_size
+        self.lstm = Conv2dGRU(in_channels=self.num_in_channels,
+                               out_channels=self.num_in_channels,
                                kernel_size=3,
-                               num_layers=1,
+                               num_layers=2,
                                bias=True,
                                batch_first=True,
                                dropout=0,
-                               bidirectional=False,
+                               bidirectional=True,
                                stride=1,
                                dilation=1,
                                groups=1)
 
         self.pooling = nn.AvgPool2d(kernel_size=self.pooling_size, stride=self.pooling_size)
-        #self.conv1x1 = nn.Conv2d(196, 4*self.pooling_size*self.pooling_size, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
+        #self.conv1x1 = nn.Conv2d(2*num_in_channels, num_in_channels, kernel_size=(1, 1), stride=(1, 1), padding=0, bias=False)
         self.ps_roi_pool = torchvision.ops.PSRoIPool(output_size=(self.pooling_size, self.pooling_size), spatial_scale=self.base_scale)
 
-        if self.DEBUG:
-            print("base net param count: ", count_params(self.base))
-            print("lstm param count: ", count_params(self.lstm))
-            #print("conv1x1 param count: ", count_params(self.conv1x1))
+        self.relu = nn.ReLU(inplace=True)
+        #self.bn = nn.BatchNorm2d(2*num_in_channels)
 
 
     def forward(self, mvs_residuals, boxes_prev):
@@ -112,16 +110,56 @@ class TrackNet(nn.Module):
         mvs_residuals = mvs_residuals.view(batch_size * seq_len, C, H, W)
         out = self.base(mvs_residuals)
 
-        out = out.view(batch_size, seq_len, *out.shape[1:])
-        out, _ = self.lstm(out)
-        out = out.contiguous().view(batch_size * seq_len, *out.shape[2:])
+        out = self.relu(out)
 
-        boxes_prev = boxes_prev.view(batch_size * seq_len * num_boxes, 5)
-        out = self.ps_roi_pool(out, boxes_prev)
-        out = self.pooling(out)
-        out = out.squeeze()
-        out = out.view(batch_size, seq_len, num_boxes, 4)
-        #out = out[:, -1, :, :]
-        out = out.mean(1)
+        #print(out.shape)
+        out = out.view(batch_size, seq_len, *out.shape[1:])
+        #print(out.shape)
+        out, _ = self.lstm(out)
+        #print(out.shape)
+        out = out.contiguous().view(batch_size, seq_len, 2, self.num_in_channels, *out.shape[3:])
+        #print(out.shape)
+
+        out_forward = out[:, -1, 0, ...]  # pick out last hidden output of forward LSTM
+        out_reverse = out[:, 0, 1, ...]  # pick out last hidden output of reverse LSTM
+
+        #print(out_forward.shape)
+        #print(out_reverse.shape)
+
+        boxes_prev = boxes_prev[:, -1, ...]  # pick out boxes at last time step
+        boxes_prev = boxes_prev.contiguous().view(batch_size * num_boxes, 5)
+        #print(boxes_prev.shape)
+        out_forward = self.ps_roi_pool(out_forward, boxes_prev)
+        out_forward = self.pooling(out_forward)
+        out_forward = out_forward.squeeze()
+        #print(out_forward.shape)
+
+        out_reverse = self.ps_roi_pool(out_reverse, boxes_prev)
+        out_reverse = self.pooling(out_reverse)
+        out_reverse = out_reverse.squeeze()
+        #print(out_reverse.shape)
+
+        out = (out_forward + out_reverse) / 2.0
+
+        out = out.view(batch_size, num_boxes, 4)
+
+
+        # batch_size, seq_len, C, H, W = mvs_residuals.shape
+        # num_boxes = boxes_prev.shape[-2]
+        #
+        # mvs_residuals = mvs_residuals.view(batch_size * seq_len, C, H, W)
+        # out = self.base(mvs_residuals)
+        #
+        # out = out.view(batch_size, seq_len, *out.shape[1:])
+        # out, _ = self.lstm(out)
+        # out = out.contiguous().view(batch_size * seq_len, *out.shape[2:])
+        #
+        # boxes_prev = boxes_prev.view(batch_size * seq_len * num_boxes, 5)
+        # out = self.ps_roi_pool(out, boxes_prev)
+        # out = self.pooling(out)
+        # out = out.squeeze()
+        # out = out.view(batch_size, seq_len, num_boxes, 4)
+        # out = out[:, -1, :, :]
+        # #out = out.mean(1)
 
         return out  # shape [batch_size, num_boxes, 4] with row format [vxc, vyc, vw, vh]
